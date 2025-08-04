@@ -15,7 +15,8 @@ function App() {
   const [error, setError] = useState(null);
   const [selectedDestinations, setSelectedDestinations] = useState([]);
   const [availableDestinations, setAvailableDestinations] = useState([]);
-  
+  const [availableProtocols, setAvailableProtocols] = useState([]);
+
   // Set default date range to current day
   const [dateRange, setDateRange] = useState(() => {
     const now = new Date();
@@ -23,17 +24,18 @@ function App() {
     const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     return { start: startOfDay, end: endOfDay };
   });
-  
+
   const [selectedHop, setSelectedHop] = useState(null);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
-  
+
   // New filtering states
   const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
   const [minRTT, setMinRTT] = useState('');
   const [maxRTT, setMaxRTT] = useState('');
   const [minUsagePercent, setMinUsagePercent] = useState('');
   const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
+  const [selectedProtocol, setSelectedProtocol] = useState(''); // Add protocol state
 
   // Load data from API
   const loadNetworkData = useCallback(async () => {
@@ -50,26 +52,31 @@ function App() {
 
       // Build API filters
       const filters = {};
-      
+
       if (selectedDestinations.length > 0) {
         filters.destinations = selectedDestinations;
       }
-      
+
       if (dateRange.start) {
         filters.start_date = dateRange.start.toISOString();
       }
-      
+
       if (dateRange.end) {
         filters.end_date = dateRange.end.toISOString();
       }
 
+      // Add protocol filter
+      if (selectedProtocol) {
+        filters.protocol = selectedProtocol;
+      }
+
       // Fetch network data from API
       const response = await apiService.getNetworkData(filters);
-      
+
       // Transform the data to frontend format
       const transformedData = dataTransformer.transformNetworkData(response.data);
       const validatedData = dataTransformer.validateTransformedData(transformedData);
-      
+
       setPathData(validatedData);
 
     } catch (err) {
@@ -79,17 +86,39 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [selectedDestinations, dateRange]);
+  }, [selectedDestinations, dateRange, selectedProtocol]);
+
+  // Load available protocols on app start
+  const loadAvailableProtocols = useCallback(async () => {
+    try {
+      const response = await apiService.getProtocols();
+      const protocols = response.data || [];
+      setAvailableProtocols(protocols);
+
+      // Set default to first protocol if available and not already set
+      if (protocols.length > 0 && !selectedProtocol) {
+        setSelectedProtocol(protocols[0]);
+      }
+    } catch (err) {
+      console.error('Error loading protocols:', err);
+      // Fallback to UDP if API fails
+      setAvailableProtocols(['UDP', 'TCP']);
+      if (!selectedProtocol) {
+        setSelectedProtocol('UDP');
+      }
+    }
+  }, [selectedProtocol]);
+
 
   // Load available destinations on app start
   const loadAvailableDestinations = useCallback(async () => {
     try {
       const response = await apiService.getDestinations();
       const destinations = response.data || [];
-    setAvailableDestinations(destinations);
-      
+      setAvailableDestinations(destinations);
+
       // Don't auto-select any destinations - let user choose
-      
+
     } catch (err) {
       console.error('Error loading destinations:', err);
       // Don't set error state for this as it's not critical
@@ -99,7 +128,8 @@ function App() {
   // Initial data load
   useEffect(() => {
     loadAvailableDestinations();
-  }, [loadAvailableDestinations]);
+    loadAvailableProtocols();
+  }, [loadAvailableDestinations, loadAvailableProtocols]);
 
   // Load network data when dependencies change
   useEffect(() => {
@@ -107,7 +137,7 @@ function App() {
   }, [loadNetworkData]);
 
   // Memoize filtered destinations to prevent unnecessary re-renders
-  const filteredDestinations = useMemo(() => 
+  const filteredDestinations = useMemo(() =>
     availableDestinations.filter(dest =>
       dest.toLowerCase().includes(destinationSearchTerm.toLowerCase())
     ), [availableDestinations, destinationSearchTerm]);
@@ -124,8 +154,8 @@ function App() {
   }, []);
 
   const handleDestinationToggle = useCallback((destination) => {
-    setSelectedDestinations(prev => 
-      prev.includes(destination) 
+    setSelectedDestinations(prev =>
+      prev.includes(destination)
         ? prev.filter(d => d !== destination)
         : [...prev, destination]
     );
@@ -140,22 +170,27 @@ function App() {
   }, []);
 
   const handlePathTypeToggle = useCallback((pathType) => {
-    setSelectedPathTypes(prev => 
-      prev.includes(pathType) 
+    setSelectedPathTypes(prev =>
+      prev.includes(pathType)
         ? prev.filter(p => p !== pathType)
         : [...prev, pathType]
     );
   }, []);
 
   const handleResetFilters = useCallback(() => {
-    
+
     setDestinationSearchTerm('');
     setMinRTT('');
     setMaxRTT('');
     setMinUsagePercent('');
     setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
     setShowPrimaryOnly(false);
-    
+
+    // Reset protocol to first available protocol
+    if (availableProtocols.length > 0) {
+      setSelectedProtocol(availableProtocols[0]);
+    }
+
     // Reset to current day
     const now = new Date();
     const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -166,21 +201,21 @@ function App() {
   const handleQuickAccess = useCallback((period) => {
     const now = new Date();
     let startDate, endDate;
-    
-    switch(period) {
+
+    switch (period) {
       case 'current-day':
         // From 00:00 today until current time
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
         endDate = now;
         break;
-        
+
       case 'last-day':
         // From 00:00 to 23:59 of yesterday
         const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
         startDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
         endDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
         break;
-        
+
       case 'current-week':
         // From Monday of current week until present day and time
         const currentDayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
@@ -189,32 +224,32 @@ function App() {
         startDate = new Date(currentMonday.getFullYear(), currentMonday.getMonth(), currentMonday.getDate(), 0, 0, 0);
         endDate = now;
         break;
-        
+
       case 'last-week':
         // From Monday to Sunday of last week (full week)
         const currentDay = now.getDay();
         const daysToLastMonday = currentDay === 0 ? 6 : currentDay - 1; // Days since current Monday
         const daysToLastWeekMonday = daysToLastMonday + 7; // Go back one more week
-        
+
         const lastMonday = new Date(now.getTime() - daysToLastWeekMonday * 24 * 60 * 60 * 1000);
         const lastSunday = new Date(lastMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
-        
+
         startDate = new Date(lastMonday.getFullYear(), lastMonday.getMonth(), lastMonday.getDate(), 0, 0, 0);
         endDate = new Date(lastSunday.getFullYear(), lastSunday.getMonth(), lastSunday.getDate(), 23, 59, 59);
         break;
-        
+
       case 'last-30-days':
         // Last 30 days from current time
         startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         endDate = now;
         break;
-        
+
       default:
         // Fallback to current day
         startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
         endDate = now;
     }
-    
+
     setDateRange({ start: startDate, end: endDate });
   }, []);
 
@@ -227,7 +262,7 @@ function App() {
     const hue = (index * 137.5) % 360;
     const saturation = 65;
     const lightness = 55;
-    
+
     const hslToHex = (h, s, l) => {
       l /= 100;
       const a = s * Math.min(l, 1 - l) / 100;
@@ -238,13 +273,13 @@ function App() {
       };
       return `#${f(0)}${f(8)}${f(4)}`;
     };
-    
+
     return hslToHex(hue, saturation, lightness);
   }, []);
 
   // If loading, show loading state
   if (loading) {
-  return (
+    return (
       <div style={{
         display: 'flex',
         justifyContent: 'center',
@@ -278,7 +313,7 @@ function App() {
         <div style={{ fontSize: '14px', color: '#666', marginBottom: '20px' }}>
           {error}
         </div>
-        <button 
+        <button
           onClick={handleRefresh}
           style={{
             padding: '10px 20px',
@@ -297,11 +332,11 @@ function App() {
   }
 
   return (
-    <div style={{ 
-      display: "flex", 
-      height: "100vh", 
+    <div style={{
+      display: "flex",
+      height: "100vh",
       fontFamily: "Arial, sans-serif",
-      overflow: "hidden" 
+      overflow: "hidden"
     }}>
       {/* Left Sidebar - Filters */}
       <div style={{
@@ -312,23 +347,23 @@ function App() {
         flexDirection: "column",
         overflowY: "auto"
       }}>
-      {/* Header */}
-        <div style={{ 
+        {/* Header */}
+        <div style={{
           padding: "20px 15px 15px 15px",
           borderBottom: "1px solid #dee2e6",
           backgroundColor: "#fff"
         }}>
           <h1 style={{ margin: "0 0 5px 0", color: "#333", fontSize: "18px" }}>
             🌐 Network Traceroute
-        </h1>
+          </h1>
           <p style={{ margin: "0 0 10px 0", color: "#666", fontSize: "12px" }}>
             Real-time network path analysis
           </p>
-          
+
           {/* API Status & Refresh */}
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
             gap: '8px',
             fontSize: '12px'
           }}>
@@ -363,7 +398,7 @@ function App() {
           <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#333" }}>
             🎯 Destinations ({selectedDestinations.length}/{availableDestinations.length})
           </h3>
-          
+
           {/* Search Input */}
           <div style={{ marginBottom: "8px" }}>
             <input
@@ -474,7 +509,7 @@ function App() {
           <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#333" }}>
             📅 Time Range
           </h3>
-          
+
           {/* Quick Access Buttons */}
           <div style={{ marginBottom: "10px" }}>
             <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
@@ -562,7 +597,37 @@ function App() {
           <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#333" }}>
             🔍 Advanced Filters
           </h3>
-          
+
+          {/* Protocol Selection */}
+          <div style={{ marginBottom: "10px" }}>
+            <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
+              Probe Protocol:
+            </label>
+            <select
+              value={selectedProtocol}
+              onChange={(e) => setSelectedProtocol(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "4px 6px",
+                border: "1px solid #ccc",
+                borderRadius: "3px",
+                fontSize: "11px",
+                backgroundColor: "#fff",
+                boxSizing: "border-box"
+              }}
+            >
+              {availableProtocols.length === 0 ? (
+                <option value="">Loading protocols...</option>
+              ) : (
+                availableProtocols.map(protocol => (
+                  <option key={protocol} value={protocol}>
+                    {protocol}
+                  </option>
+                ))
+              )}
+            </select>
+          </div>
+
           {/* Path Type Filters */}
           <div style={{ marginBottom: "10px" }}>
             <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
@@ -665,7 +730,7 @@ function App() {
               />
               <span style={{ fontSize: "11px" }}>Show Primary Paths Only</span>
             </label>
-          
+
           </div>
 
           {/* Reset Button */}
@@ -684,12 +749,12 @@ function App() {
           >
             Reset All Filters
           </button>
-      </div>
+        </div>
 
-      {/* Current Selection Info */}
-      {selectedDestinations.length > 0 && (
-        <div style={{
-          padding: "10px 15px",
+        {/* Current Selection Info */}
+        {selectedDestinations.length > 0 && (
+          <div style={{
+            padding: "10px 15px",
             backgroundColor: "#e8f5e8",
             borderBottom: "1px solid #c3e6c3",
             fontSize: "11px"
@@ -700,16 +765,19 @@ function App() {
               <div style={{ color: "#666" }}>{selectedDestinations.join(", ")}</div>
             )}
             {showPrimaryOnly && <div style={{ color: "#666" }}>Primary paths only</div>}
-          {(minRTT || maxRTT) && (
+            {selectedProtocol !== 'ALL' && (
+              <div style={{ color: "#666" }}>Protocol: {selectedProtocol}</div>
+            )}
+            {(minRTT || maxRTT) && (
               <div style={{ color: "#666" }}>
                 RTT: {minRTT || '0'}ms - {maxRTT || '∞'}ms
               </div>
-          )}
-          {minUsagePercent && (
+            )}
+            {minUsagePercent && (
               <div style={{ color: "#666" }}>Min usage: {minUsagePercent}%</div>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
       </div>
 
       {/* Right Side - Graph */}
@@ -729,7 +797,7 @@ function App() {
             justifyContent: "center",
             flexDirection: "column",
             backgroundColor: "#f8f9fa"
-            
+
           }}>
             <div style={{ marginBottom: "15px", fontSize: "48px" }}>📋</div>
             <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#856404", fontSize: "18px" }}>
@@ -739,9 +807,9 @@ function App() {
               Please select one or more destinations from the sidebar to view network traceroute data.
             </div>
             {availableDestinations.length > 0 && (
-              <div style={{ 
-                color: "#666", 
-                fontSize: "12px", 
+              <div style={{
+                color: "#666",
+                fontSize: "12px",
                 marginTop: "10px",
                 textAlign: "center",
                 maxWidth: "500px"
@@ -753,32 +821,34 @@ function App() {
           </div>
         ) : (
           <div style={{ flex: "1", position: "relative" }}>
-        <NetworkGraph
-          pathData={pathData}
-          selectedDestinations={selectedDestinations}
-          dateRange={dateRange}
-          onHopSelect={handleHopSelect}
-          showPrimaryOnly={showPrimaryOnly}
-          minRTT={minRTT}
-          maxRTT={maxRTT}
-          minUsagePercent={minUsagePercent}
-          selectedPathTypes={selectedPathTypes}
-        />
-        
-        {/* Instructions */}
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          right: "10px",
-          background: "rgba(255, 255, 255, 0.9)",
-          padding: "8px 12px",
-          borderRadius: "4px",
-          fontSize: "12px",
+            <NetworkGraph
+              pathData={pathData}
+              selectedDestinations={selectedDestinations}
+              dateRange={dateRange}
+              onHopSelect={handleHopSelect}
+              showPrimaryOnly={showPrimaryOnly}
+              minRTT={minRTT}
+              maxRTT={maxRTT}
+              minUsagePercent={minUsagePercent}
+              selectedPathTypes={selectedPathTypes}
+              selectedProtocol={selectedProtocol}
+
+            />
+
+            {/* Instructions */}
+            <div style={{
+              position: "absolute",
+              top: "10px",
+              right: "10px",
+              background: "rgba(255, 255, 255, 0.9)",
+              padding: "8px 12px",
+              borderRadius: "4px",
+              fontSize: "12px",
               border: "1px solid #ccc",
               zIndex: 1000
-        }}>
-          💡 Click on any network hop to view detailed information
-        </div>
+            }}>
+              💡 Click on any network hop to view detailed information
+            </div>
           </div>
         )}
       </div>

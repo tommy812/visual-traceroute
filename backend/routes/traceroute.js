@@ -20,5 +20,7 @@ router.get('/network-data', tracerouteController.getNetworkData);
 
 // Utility endpoints
 router.get('/destinations', tracerouteController.getDestinations);
+router.get('/protocols', tracerouteController.getProtocols); 
+
 
 module.exports = router; 

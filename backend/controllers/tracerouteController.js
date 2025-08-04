@@ -31,13 +31,13 @@ class TracerouteController {
   // Get all trace runs with optional filtering
   async getTraceRuns(req, res) {
     try {
-      const { 
-        destination, 
-        method_id, 
-        start_date, 
-        end_date, 
-        limit = 100, 
-        offset = 0 
+      const {
+        destination,
+        method_id,
+        start_date,
+        end_date,
+        limit = 100,
+        offset = 0
       } = req.query;
 
       let query = supabase
@@ -52,15 +52,15 @@ class TracerouteController {
       if (destination) {
         query = query.ilike('destination', `%${destination}%`);
       }
-      
+
       if (method_id) {
         query = query.eq('method_id', method_id);
       }
-      
+
       if (start_date) {
         query = query.gte('timestamp', start_date);
       }
-      
+
       if (end_date) {
         query = query.lte('timestamp', end_date);
       }
@@ -178,11 +178,12 @@ class TracerouteController {
   // Get aggregated data for network visualization
   async getNetworkData(req, res) {
     try {
-      const { 
-        destinations, 
-        start_date, 
-        end_date, 
-        method_id 
+      const {
+        destinations,
+        start_date,
+        end_date,
+        method_id,
+        protocol
       } = req.query;
 
       // Build the query with proper joins
@@ -216,15 +217,19 @@ class TracerouteController {
         const destArray = destinations.split(',').map(d => d.trim());
         query = query.in('destination', destArray);
       }
-      
+
       if (method_id) {
         query = query.eq('method_id', method_id);
       }
-      
+
+      if (protocol) {
+        query = query.eq('traceroute_methods.description', protocol);
+      }
+
       if (start_date) {
         query = query.gte('timestamp', start_date);
       }
-      
+
       if (end_date) {
         query = query.lte('timestamp', end_date);
       }
@@ -236,7 +241,7 @@ class TracerouteController {
       }
 
       // Filter out trace runs without hops
-      const validTraceRuns = (data || []).filter(traceRun => 
+      const validTraceRuns = (data || []).filter(traceRun =>
         traceRun.hops && Array.isArray(traceRun.hops) && traceRun.hops.length > 0
       );
 
@@ -289,6 +294,36 @@ class TracerouteController {
       res.status(500).json({
         success: false,
         error: 'Failed to fetch destinations',
+        details: error.message
+      });
+    }
+  }
+
+  // Get available protocols from traceroute methods
+  async getProtocols(req, res) {
+    try {
+      const { data, error } = await supabase
+        .from('traceroute_methods')
+        .select('description')
+        .order('description');
+
+      if (error) {
+        throw error;
+      }
+
+      // Extract unique protocol names
+      const protocols = [...new Set(data.map(method => method.description))];
+
+      res.json({
+        success: true,
+        data: protocols,
+        count: protocols.length
+      });
+    } catch (error) {
+      console.error('Error fetching protocols:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Failed to fetch protocols',
         details: error.message
       });
     }

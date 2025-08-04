@@ -81,7 +81,8 @@ const NetworkGraph = React.memo(({
   minRTT = '',
   maxRTT = '',
   minUsagePercent = '',
-  selectedPathTypes = ['PRIMARY', 'ALTERNATIVE']
+  selectedPathTypes = ['PRIMARY', 'ALTERNATIVE'],
+  selectedProtocol = ''
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
@@ -1650,37 +1651,14 @@ const NetworkGraph = React.memo(({
     }
   }, [networkInstance, isFullscreen, dimensions]);
 
-  // Memoize options to prevent unnecessary re-renders
-  const options = useMemo(() => ({
-    layout: {
-      hierarchical: {
-        enabled: true,
-        direction: "LR",
-        sortMethod: "directed",
-        shakeTowards: "roots",
-        nodeSpacing: 100,
-        treeSpacing: 120,
-        levelSeparation: 150,
-        blockShifting: false,
-        edgeMinimization: false,
-        parentCentralization: false
-      }
-    },
-    physics: {
-      enabled: false
-    },
-    edges: {
-      smooth: { 
-        type: "continuous",
-        roundness: 0.2
-      },
-      chosen: false
-    },
+  const [layoutOptimization, setLayoutOptimization] = useState('minimal-crossings');
+
+const options = useMemo(() => {
+  const baseOptions = {
     nodes: {
-      font: { 
-        face: 'Arial' // Keep face as default, individual nodes override size and stroke
-      },
+      font: { face: 'Arial' },
       margin: 10,
+      fixed:true,
       chosen: {
         node: function(values, id, selected, hovering) {
           values.borderColor = '#2196F3';
@@ -1689,15 +1667,120 @@ const NetworkGraph = React.memo(({
       }
     },
     interaction: {
-      dragNodes: false,
+      dragNodes: true,
       zoomView: true,
       dragView: true,
       selectConnectedEdges: false
     },
-    configure: {
-      enabled: false
-    }
-  }), []);
+    configure: { enabled: false }
+  };
+
+  switch(layoutOptimization) {
+    case 'minimal-crossings':
+      return {
+        ...baseOptions,
+        layout: {
+          hierarchical: {
+            enabled: true,
+            direction: "LR",
+            sortMethod: "directed",
+            shakeTowards: "leaves",
+            nodeSpacing: 80,
+            treeSpacing: 60,
+            levelSeparation: 250,
+            blockShifting: true,
+            edgeMinimization: true,
+            parentCentralization: false
+          }
+        },
+        physics: { enabled: false },
+        edges: {
+          smooth: { 
+            type: "continuous",
+            roundness: 0.1,
+            forceDirection: "horizontal"
+          },
+          chosen: false
+        }
+      };
+      
+    case 'ultra-clean':
+      return {
+        ...baseOptions,
+        layout: {
+          hierarchical: {
+            enabled: true,
+            direction: "LR",
+            sortMethod: "directed",
+            shakeTowards: "leaves",
+            nodeSpacing: 120,
+            treeSpacing: 100,
+            levelSeparation: 300,
+            blockShifting: true,
+            edgeMinimization: true,
+            parentCentralization: false
+          }
+        },
+        physics: { enabled: false },
+        edges: {
+          smooth: false, // Straight lines only
+          chosen: false
+        }
+      };
+      
+    default:
+      return baseOptions;
+  }
+}, [layoutOptimization]);
+
+  // // Memoize options to prevent unnecessary re-renders
+  // const options = useMemo(() => ({
+  //   layout: {
+  //     hierarchical: {
+  //       enabled: true,
+  //       direction: "LR",
+  //       sortMethod: "hubsize",
+  //       shakeTowards: "root",
+  //       nodeSpacing: 120,
+  //       treeSpacing: 120,
+  //       levelSeparation: 150,
+  //       blockShifting: true,
+  //       edgeMinimization: true,
+  //       parentCentralization: true
+  //     }
+  //   },
+  //   physics: {
+  //     enabled: true
+  //   },
+  //   edges: {
+  //     smooth: { 
+  //       type: "dynamic",
+  //       roundness: 0.2
+  //     },
+  //     chosen: true
+  //   },
+  //   nodes: {
+  //     font: { 
+  //       face: 'Arial' // Keep face as default, individual nodes override size and stroke
+  //     },
+  //     margin: 10,
+  //     chosen: {
+  //       node: function(values, id, selected, hovering) {
+  //         values.borderColor = '#2196F3';
+  //         values.borderWidth = 2;
+  //       }
+  //     }
+  //   },
+  //   interaction: {
+  //     dragNodes: true,
+  //     zoomView: true,
+  //     dragView: true,
+  //     selectConnectedEdges: false
+  //   },
+  //   configure: {
+  //     enabled: false
+  //   }
+  // }), []);
 
   // Enhanced hop selection handler that fetches IP geolocation data
   const handleHopSelection = useCallback(async (nodeData) => {

@@ -82,6 +82,10 @@ class ApiService {
     
     return this.makeRequest(endpoint);
   }
+  
+  async getProtocols() {
+    return this.makeRequest('/protocols');
+  }
 
   // Health check
   async healthCheck() {
