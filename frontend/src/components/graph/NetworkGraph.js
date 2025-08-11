@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Graph from 'react-graph-vis';
 import dataTransformer from '../../services/dataTransformer';
 import ipGeoService from '../../services/ipGeoService';
+import { useGraphData } from '../../hooks/useGraphData';
 
 // Error Boundary for NetworkGraph
 class GraphErrorBoundary extends React.Component {
@@ -62,11 +63,11 @@ class GraphErrorBoundary extends React.Component {
 }
 
 // Optimized NetworkGraph component with React.memo
-const NetworkGraph = React.memo(({ 
-  pathData, 
-  selectedDestinations, 
-  dateRange, 
-  onHopSelect, 
+const NetworkGraph = React.memo(({
+  pathData,
+  selectedDestinations,
+  dateRange,
+  onHopSelect,
   showPrimaryOnly = false,
   minRTT = '',
   maxRTT = '',
@@ -82,7 +83,14 @@ const NetworkGraph = React.memo(({
   const [expandedPrefixes, setExpandedPrefixes] = useState(new Set()); // Track expanded prefix groups
   const [showPrefixAggregation, setShowPrefixAggregation] = useState(false); // Toggle prefix aggregation
   const graphContainerRef = useRef(null); // Ref for capturing the graph
-
+  const { filteredData: filteredByHook } = useGraphData(pathData, {
+    minRTT,
+    maxRTT,
+    minUsagePercent,
+    selectedPathTypes,
+    showPrimaryOnly,
+    selectedProtocol
+  });
   // Get viewport dimensions for fullscreen
   useEffect(() => {
     const updateDimensions = () => {
@@ -119,12 +127,12 @@ const NetworkGraph = React.memo(({
     const r = parseInt(hexColor.slice(1, 3), 16);
     const g = parseInt(hexColor.slice(3, 5), 16);
     const b = parseInt(hexColor.slice(5, 7), 16);
-    
+
     // Mix with white to create lighter version
     const mixedR = Math.round(r * intensity + 255 * (1 - intensity));
     const mixedG = Math.round(g * intensity + 255 * (1 - intensity));
     const mixedB = Math.round(b * intensity + 255 * (1 - intensity));
-    
+
     // Convert back to hex
     const toHex = (n) => n.toString(16).padStart(2, '0');
     return `#${toHex(mixedR)}${toHex(mixedG)}${toHex(mixedB)}`;
@@ -135,7 +143,7 @@ const NetworkGraph = React.memo(({
     const hue = (index * 137.5) % 360;
     const saturation = 65;
     const lightness = 55;
-    
+
     const hslToHex = (h, s, l) => {
       l /= 100;
       const a = s * Math.min(l, 1 - l) / 100;
@@ -146,7 +154,7 @@ const NetworkGraph = React.memo(({
       };
       return `#${f(0)}${f(8)}${f(4)}`;
     };
-    
+
     return hslToHex(hue, saturation, lightness);
   }, []);
 
@@ -155,7 +163,7 @@ const NetworkGraph = React.memo(({
     if (colors.length === 1) {
       return { color: colors[0], opacity: 1.0 };
     }
-    
+
     // For multiple colors, create a gradient effect by using the first color as primary
     // and indicating multiple paths through styling
     return {
@@ -196,6 +204,7 @@ const NetworkGraph = React.memo(({
       maxRTT,
       minUsagePercent,
       selectedPathTypes.sort().join(','),
+      selectedProtocol || '',           // ADD: ensure remount on protocol change
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
@@ -203,15 +212,14 @@ const NetworkGraph = React.memo(({
       showPrefixAggregation.toString()
     ];
     return keyParts.join('|');
-  }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
-
+  }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocol, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
   // Enhanced highlighting logic - MOVED BEFORE GRAPH DATA CREATION
   const getNodeHighlightStyle = useCallback((nodeId) => {
     if (highlightedPaths.length === 0) return { isHighlighted: false, isDimmed: false, color: null };
 
     // Check if this node is in any highlighted path
     const relevantPaths = highlightedPaths.filter(p => p.nodes.includes(nodeId));
-    
+
     if (relevantPaths.length > 0) {
       // Use the color of the first relevant path
       return {
@@ -234,10 +242,10 @@ const NetworkGraph = React.memo(({
     if (highlightedPaths.length === 0) return { isHighlighted: false, isDimmed: false, colors: [], lineStyles: [] };
 
     // Check if this edge is in any highlighted path
-    const relevantPaths = highlightedPaths.filter(p => 
+    const relevantPaths = highlightedPaths.filter(p =>
       p.edges.some(e => e.from === fromId && e.to === toId)
     );
-    
+
     if (relevantPaths.length > 0) {
       return {
         isHighlighted: true,
@@ -265,59 +273,38 @@ const NetworkGraph = React.memo(({
 
     // Filter data based on selected destinations, date range, and other filters
     const getFilteredData = () => {
-      if (!pathData || !selectedDestinations || selectedDestinations.length === 0) {
-        console.log('No valid data or destinations selected');
+      if (!filteredByHook || !selectedDestinations || selectedDestinations.length === 0) {
         return {};
       }
-      
+
       const filtered = {};
-      Object.entries(pathData).forEach(([destination, data]) => {
+      Object.entries(filteredByHook).forEach(([destination, data]) => {
         if (selectedDestinations.includes(destination)) {
-          // Apply filters to the destination data
+          // Apply only date-window filtering here (protocol/RTT/usage/path-types already applied in hook)
           let filteredData = { ...data };
-          
-          // Check if primary path meets criteria
-          let includePrimary = true;
-          if (dateRange.start && dateRange.end) {
-            const primaryTimestamp = new Date(data.primary_path.timeStamp).getTime();
-            const startTime = dateRange.start.getTime();
-            const endTime = dateRange.end.getTime();
-            includePrimary = primaryTimestamp >= startTime && primaryTimestamp <= endTime;
-          }
-          
-          if (includePrimary) {
-            const primaryMeetsRTT = (!minRTT || data.primary_path.avg_rtt >= parseFloat(minRTT)) &&
-                                  (!maxRTT || data.primary_path.avg_rtt <= parseFloat(maxRTT));
-            const primaryMeetsUsage = !minUsagePercent || data.primary_path.percent >= parseFloat(minUsagePercent);
-            const primaryPathAllowed = selectedPathTypes.includes('PRIMARY');
-            
-            includePrimary = primaryMeetsRTT && primaryMeetsUsage && primaryPathAllowed;
-          }
-          
-          // Filter alternative paths
-          const validAlternatives = data.alternatives.filter(altPath => {
-            let includeAlt = true;
-            
+
+          // Primary path: require existence and date match
+          let includePrimary = false;
+          if (data.primary_path) {
+            includePrimary = true;
             if (dateRange.start && dateRange.end) {
-              const altTimestamp = new Date(altPath.timeStamp).getTime();
+              const ts = new Date(data.primary_path.timeStamp).getTime?.() || new Date(data.primary_path.timeStamp).valueOf();
               const startTime = dateRange.start.getTime();
               const endTime = dateRange.end.getTime();
-              includeAlt = altTimestamp >= startTime && altTimestamp <= endTime;
+              includePrimary = ts >= startTime && ts <= endTime;
             }
-            
-            if (includeAlt) {
-              const rttMeets = (!minRTT || altPath.avg_rtt >= parseFloat(minRTT)) &&
-                              (!maxRTT || altPath.avg_rtt <= parseFloat(maxRTT));
-              const usageMeets = !minUsagePercent || altPath.percent >= parseFloat(minUsagePercent);
-              const pathTypeAllowed = selectedPathTypes.includes('ALTERNATIVE');
-              
-              includeAlt = rttMeets && usageMeets && pathTypeAllowed;
-            }
-            
-            return includeAlt;
+          }
+
+          // Alternatives: date-window filter only; default to []
+          const validAlternatives = (Array.isArray(data.alternatives) ? data.alternatives : []).filter(altPath => {
+            if (!(dateRange.start && dateRange.end)) return true;
+            const ts = new Date(altPath.timeStamp).getTime?.() || new Date(altPath.timeStamp).valueOf();
+            const startTime = dateRange.start.getTime();
+            const endTime = dateRange.end.getTime();
+            return ts >= startTime && ts <= endTime;
           });
-          
-          // Include destination if primary path is valid OR there are valid alternatives
+
+          // Include destination if primary is in-window or any alternative remains
           if (includePrimary || validAlternatives.length > 0) {
             filteredData.alternatives = validAlternatives;
             filteredData.includePrimary = includePrimary;
@@ -325,14 +312,14 @@ const NetworkGraph = React.memo(({
           }
         }
       });
-      
+
       return filtered;
     };
 
     // Function to create graph data from filtered path data
     const createGraphData = () => {
       const filteredData = getFilteredData();
-      
+
       if (Object.keys(filteredData).length === 0) {
         console.log('No filtered data available');
         return { nodes: [], edges: [], nodeDetails: new Map(), pathMapping: new Map() };
@@ -343,11 +330,11 @@ const NetworkGraph = React.memo(({
       const nodeDetails = new Map();
       const pathMapping = new Map(); // Maps nodes/edges to paths they belong to
       const edgeUsage = new Map(); // Track which destinations use each edge
-      
+
       // Use a deterministic ID generation system based on content
       const nodeIdMap = new Map();
       let nodeIdCounter = 1;
-      
+
       // Track all hop details for each IP across all paths
       const ipToHopDetails = new Map();
 
@@ -372,9 +359,9 @@ const NetworkGraph = React.memo(({
         id: sourceId,
         label: "Source",
         title: "Starting point for all network paths",
-        color: { 
-          background: "#97C2FC", 
-          border: "#2B7CE9" 
+        color: {
+          background: "#97C2FC",
+          border: "#2B7CE9"
         },
         font: {
           size: 12,
@@ -394,7 +381,7 @@ const NetworkGraph = React.memo(({
       const allUniqueIPs = new Set();
       const allTimeouts = new Set(); // Track timeout hops
       const ipLevelMap = new Map(); // Track the level (hop position) for each IP
-      
+
       Object.entries(filteredData).forEach(([destination, destData]) => {
         // Primary path IPs (only if included)
         if (destData.includePrimary !== false) {
@@ -403,11 +390,11 @@ const NetworkGraph = React.memo(({
               // Handle timeout hops
               const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_primary`;
               allTimeouts.add(timeoutKey);
-              
+
               if (!ipToHopDetails.has(timeoutKey)) {
                 ipToHopDetails.set(timeoutKey, []);
               }
-              
+
               ipToHopDetails.get(timeoutKey).push({
                 ip: null,
                 hostname: hopObj.hostname,
@@ -423,7 +410,7 @@ const NetworkGraph = React.memo(({
                 timestamp: destData.primary_path.timeStamp,
                 is_timeout: true
               });
-              
+
               // Track the minimum level for this timeout
               const currentLevel = hopIndex + 1;
               if (!ipLevelMap.has(timeoutKey) || ipLevelMap.get(timeoutKey) > currentLevel) {
@@ -431,37 +418,37 @@ const NetworkGraph = React.memo(({
               }
             } else {
               // Handle regular hops
-            allUniqueIPs.add(hopObj.ip);
-            
-            // Track the minimum level (earliest appearance) for this IP
-            const currentLevel = hopIndex + 1;
-            if (!ipLevelMap.has(hopObj.ip) || ipLevelMap.get(hopObj.ip) > currentLevel) {
-              ipLevelMap.set(hopObj.ip, currentLevel);
-            }
-            
-            // Store hop details for this specific occurrence
-            if (!ipToHopDetails.has(hopObj.ip)) {
-              ipToHopDetails.set(hopObj.ip, []);
-            }
-            
-            ipToHopDetails.get(hopObj.ip).push({
-              ip: hopObj.ip,
-              hostname: hopObj.hostname,
-              rtt_ms: hopObj.rtt_ms,
+              allUniqueIPs.add(hopObj.ip);
+
+              // Track the minimum level (earliest appearance) for this IP
+              const currentLevel = hopIndex + 1;
+              if (!ipLevelMap.has(hopObj.ip) || ipLevelMap.get(hopObj.ip) > currentLevel) {
+                ipLevelMap.set(hopObj.ip, currentLevel);
+              }
+
+              // Store hop details for this specific occurrence
+              if (!ipToHopDetails.has(hopObj.ip)) {
+                ipToHopDetails.set(hopObj.ip, []);
+              }
+
+              ipToHopDetails.get(hopObj.ip).push({
+                ip: hopObj.ip,
+                hostname: hopObj.hostname,
+                rtt_ms: hopObj.rtt_ms,
                 avgRtt: hopObj.rtt_ms && hopObj.rtt_ms.length > 0 ? (hopObj.rtt_ms.reduce((a, b) => a + b, 0) / hopObj.rtt_ms.length).toFixed(2) : 'N/A',
-              destination: destination,
-              hopNumber: hopObj.hop_number || (hopIndex + 1),
-              pathType: "PRIMARY",
-              pathPercent: destData.primary_path.percent,
-              pathCount: destData.primary_path.count,
-              totalTraces: destData.total_traces,
-              pathAvgRtt: destData.primary_path.avg_rtt,
-              timestamp: destData.primary_path.timeStamp
-            });
+                destination: destination,
+                hopNumber: hopObj.hop_number || (hopIndex + 1),
+                pathType: "PRIMARY",
+                pathPercent: destData.primary_path.percent,
+                pathCount: destData.primary_path.count,
+                totalTraces: destData.total_traces,
+                pathAvgRtt: destData.primary_path.avg_rtt,
+                timestamp: destData.primary_path.timeStamp
+              });
             }
           });
         }
-        
+
         // Alternative path IPs (if not showPrimaryOnly)
         if (!showPrimaryOnly) {
           destData.alternatives.forEach((altPath, altIndex) => {
@@ -470,11 +457,11 @@ const NetworkGraph = React.memo(({
                 // Handle timeout hops
                 const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_alt${altIndex}`;
                 allTimeouts.add(timeoutKey);
-                
+
                 if (!ipToHopDetails.has(timeoutKey)) {
                   ipToHopDetails.set(timeoutKey, []);
                 }
-                
+
                 ipToHopDetails.get(timeoutKey).push({
                   ip: null,
                   hostname: hopObj.hostname,
@@ -489,7 +476,7 @@ const NetworkGraph = React.memo(({
                   pathAvgRtt: altPath.avg_rtt,
                   timestamp: altPath.timeStamp
                 });
-                
+
                 // Track the minimum level for this timeout
                 const currentLevel = hopIndex + 1;
                 if (!ipLevelMap.has(timeoutKey) || ipLevelMap.get(timeoutKey) > currentLevel) {
@@ -497,32 +484,32 @@ const NetworkGraph = React.memo(({
                 }
               } else {
                 // Handle regular hops
-              allUniqueIPs.add(hopObj.ip);
-              
-              // Track the minimum level (earliest appearance) for this IP
-              const currentLevel = hopIndex + 1;
-              if (!ipLevelMap.has(hopObj.ip) || ipLevelMap.get(hopObj.ip) > currentLevel) {
-                ipLevelMap.set(hopObj.ip, currentLevel);
-              }
-              
-              if (!ipToHopDetails.has(hopObj.ip)) {
-                ipToHopDetails.set(hopObj.ip, []);
-              }
-              
-              ipToHopDetails.get(hopObj.ip).push({
-                ip: hopObj.ip,
-                hostname: hopObj.hostname,
-                rtt_ms: hopObj.rtt_ms,
+                allUniqueIPs.add(hopObj.ip);
+
+                // Track the minimum level (earliest appearance) for this IP
+                const currentLevel = hopIndex + 1;
+                if (!ipLevelMap.has(hopObj.ip) || ipLevelMap.get(hopObj.ip) > currentLevel) {
+                  ipLevelMap.set(hopObj.ip, currentLevel);
+                }
+
+                if (!ipToHopDetails.has(hopObj.ip)) {
+                  ipToHopDetails.set(hopObj.ip, []);
+                }
+
+                ipToHopDetails.get(hopObj.ip).push({
+                  ip: hopObj.ip,
+                  hostname: hopObj.hostname,
+                  rtt_ms: hopObj.rtt_ms,
                   avgRtt: hopObj.rtt_ms && hopObj.rtt_ms.length > 0 ? (hopObj.rtt_ms.reduce((a, b) => a + b, 0) / hopObj.rtt_ms.length).toFixed(2) : 'N/A',
-                destination: destination,
-                hopNumber: hopObj.hop_number || (hopIndex + 1),
-                pathType: `ALTERNATIVE ${altIndex + 1}`,
-                pathPercent: altPath.percent,
-                pathCount: altPath.count,
-                totalTraces: destData.total_traces,
-                pathAvgRtt: altPath.avg_rtt,
-                timestamp: altPath.timeStamp
-              });
+                  destination: destination,
+                  hopNumber: hopObj.hop_number || (hopIndex + 1),
+                  pathType: `ALTERNATIVE ${altIndex + 1}`,
+                  pathPercent: altPath.percent,
+                  pathCount: altPath.count,
+                  totalTraces: destData.total_traces,
+                  pathAvgRtt: altPath.avg_rtt,
+                  timestamp: altPath.timeStamp
+                });
               }
             });
           });
@@ -536,11 +523,11 @@ const NetworkGraph = React.memo(({
       let ipGroups = {};
       let prefixGroups = {};
       let timeoutGroups = new Map(); // Track grouped consecutive timeouts
-      
+
       if (showPrefixAggregation && allUniqueIPs.size > 0) {
         const ipsArray = Array.from(allUniqueIPs);
         prefixGroups = dataTransformer.groupByNetworkPrefix(ipsArray);
-        
+
         // Create IP groups based on prefixes and expansion state
         Object.entries(prefixGroups).forEach(([prefix, ips]) => {
           if (ips.length > 1 && !expandedPrefixes.has(prefix)) {
@@ -578,7 +565,7 @@ const NetworkGraph = React.memo(({
           // Process primary path
           if (destData.includePrimary !== false) {
             const timeouts = [];
-            
+
             destData.primary_path.path.forEach((hopObj, hopIndex) => {
               if (hopObj.is_timeout || !hopObj.ip || hopObj.ip === 'null' || hopObj.ip === null) {
                 const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_primary`;
@@ -604,14 +591,14 @@ const NetworkGraph = React.memo(({
                     pathType: "PRIMARY",
                     expanded: expandedPrefixes.has(groupKey)
                   });
-                  
+
                   // Remove individual timeouts from allTimeouts if they're grouped
                   timeouts.forEach(t => allTimeouts.delete(t.key));
                 }
                 timeouts.length = 0; // Reset
               }
             });
-            
+
             // Handle timeouts at the end of path
             if (timeouts.length > 1) {
               const groupKey = `timeout_group_${timeouts[0].hopNumber}_${timeouts[timeouts.length - 1].hopNumber}_${destination}_primary`;
@@ -625,16 +612,16 @@ const NetworkGraph = React.memo(({
                 pathType: "PRIMARY",
                 expanded: expandedPrefixes.has(groupKey)
               });
-              
+
               timeouts.forEach(t => allTimeouts.delete(t.key));
             }
           }
-          
+
           // Process alternative paths
           if (!showPrimaryOnly) {
-            destData.alternatives.forEach((altPath, altIndex) => {
+            (destData.alternatives || []).forEach((altPath, altIndex) => {
               const timeouts = [];
-              
+
               altPath.path.forEach((hopObj, hopIndex) => {
                 if (hopObj.is_timeout || !hopObj.ip || hopObj.ip === 'null' || hopObj.ip === null) {
                   const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_alt${altIndex}`;
@@ -660,13 +647,13 @@ const NetworkGraph = React.memo(({
                       pathType: `ALTERNATIVE ${altIndex + 1}`,
                       expanded: expandedPrefixes.has(groupKey)
                     });
-                    
+
                     timeouts.forEach(t => allTimeouts.delete(t.key));
                   }
                   timeouts.length = 0; // Reset
                 }
               });
-              
+
               // Handle timeouts at the end of path
               if (timeouts.length > 1) {
                 const groupKey = `timeout_group_${timeouts[0].hopNumber}_${timeouts[timeouts.length - 1].hopNumber}_${destination}_alt${altIndex}`;
@@ -680,7 +667,7 @@ const NetworkGraph = React.memo(({
                   pathType: `ALTERNATIVE ${altIndex + 1}`,
                   expanded: expandedPrefixes.has(groupKey)
                 });
-                
+
                 timeouts.forEach(t => allTimeouts.delete(t.key));
               }
             });
@@ -703,7 +690,7 @@ const NetworkGraph = React.memo(({
         const optimizedPositions = new Map();
         const maxLevel = Math.max(...Array.from(ipLevelMap.values()));
         const destinations = Object.keys(filteredData).sort();
-        
+
         // Position destinations first
         destinations.forEach((dest, index) => {
           optimizedPositions.set(`dest:${dest}`, index);
@@ -736,7 +723,7 @@ const NetworkGraph = React.memo(({
                 // Check if there's a direct path connection
                 const connects = hopDetails.some(detail => {
                   const destPaths = filteredData[detail.destination];
-                  
+
                   // Check primary path
                   if (destPaths.includePrimary !== false) {
                     const pathHops = destPaths.primary_path.path;
@@ -744,7 +731,7 @@ const NetworkGraph = React.memo(({
                     const nextIndex = pathHops.findIndex(hop => hop.ip === nextIP);
                     if (currentIndex >= 0 && nextIndex === currentIndex + 1) return true;
                   }
-                  
+
                   // Check alternative paths
                   return destPaths.alternatives.some(altPath => {
                     const pathHops = altPath.path;
@@ -753,7 +740,7 @@ const NetworkGraph = React.memo(({
                     return currentIndex >= 0 && nextIndex === currentIndex + 1;
                   });
                 });
-                
+
                 if (connects) {
                   const nextIPPosition = optimizedPositions.get(`ip:${nextIP}`) || 0;
                   totalScore += nextIPPosition;
@@ -789,7 +776,7 @@ const NetworkGraph = React.memo(({
           // Create prefix group node
           const nodeId = getOrCreateNodeId(`prefix:${key}`);
           const nodeLevel = Math.min(...groupInfo.ips.map(ip => ipLevelMap.get(ip) || 1));
-          
+
           // Aggregate details from all IPs in prefix
           const allDetails = [];
           groupInfo.ips.forEach(ip => {
@@ -805,8 +792,8 @@ const NetworkGraph = React.memo(({
             id: nodeId,
             label: `${key}\n(${groupInfo.ips.length} IPs)`,
             title: `Network Prefix: ${key}\nContains ${groupInfo.ips.length} IP addresses\nUsed in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick to expand`,
-            color: { 
-              background: "#FF9800", 
+            color: {
+              background: "#FF9800",
               border: "#F57C00"
             },
             font: {
@@ -850,38 +837,38 @@ const NetworkGraph = React.memo(({
           // Determine display label for the IP
           const displayLabel = firstHopDetails?.hostname || ip;
 
-        nodes.push({
-          id: nodeId,
-          label: displayLabel,
-          title: `IP: ${ip}\n${firstHopDetails?.hostname ? `Hostname: ${firstHopDetails.hostname}\n` : ''}Used in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick for detailed information`,
-          color: { 
-              background: "#FFA726", 
+          nodes.push({
+            id: nodeId,
+            label: displayLabel,
+            title: `IP: ${ip}\n${firstHopDetails?.hostname ? `Hostname: ${firstHopDetails.hostname}\n` : ''}Used in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick for detailed information`,
+            color: {
+              background: "#FFA726",
               border: "#FF8F00"
-          },
-          font: {
-            size: 12,
-            color: '#333333',
-            strokeWidth: 2,
-            strokeColor: '#ffffff'
-          },
-          shape: "dot",
-          size: 20,
-          nodeType: "hop",
-          ip: ip,
-          level: nodeLevel,
+            },
+            font: {
+              size: 12,
+              color: '#333333',
+              strokeWidth: 2,
+              strokeColor: '#ffffff'
+            },
+            shape: "dot",
+            size: 20,
+            nodeType: "hop",
+            ip: ip,
+            level: nodeLevel,
             physics: false
-        });
+          });
 
-        // Store all hop details for this node
-        nodeDetails.set(nodeId, allHopDetails);
+          // Store all hop details for this node
+          nodeDetails.set(nodeId, allHopDetails);
 
-        // Map node to paths it belongs to
-        allHopDetails.forEach(hopDetail => {
-          const pathId = `${hopDetail.destination}-${hopDetail.pathType}`;
-          if (!pathMapping.has(nodeId)) {
-            pathMapping.set(nodeId, new Set());
-          }
-          pathMapping.get(nodeId).add(pathId);
+          // Map node to paths it belongs to
+          allHopDetails.forEach(hopDetail => {
+            const pathId = `${hopDetail.destination}-${hopDetail.pathType}`;
+            if (!pathMapping.has(nodeId)) {
+              pathMapping.set(nodeId, new Set());
+            }
+            pathMapping.get(nodeId).add(pathId);
           });
         }
       });
@@ -891,7 +878,7 @@ const NetworkGraph = React.memo(({
         if (!groupInfo.expanded) {
           // Create grouped timeout node
           const nodeId = getOrCreateNodeId(`timeout_group:${groupKey}`);
-          
+
           // Aggregate details from all timeouts in group
           const allDetails = [];
           groupInfo.timeouts.forEach(timeout => {
@@ -907,8 +894,8 @@ const NetworkGraph = React.memo(({
             id: nodeId,
             label: `⏱️ ${groupInfo.timeouts.length} Timeouts`,
             title: `Consecutive Timeout Hops #${groupInfo.startHop}-${groupInfo.endHop}\n${groupInfo.timeouts.length} consecutive timeouts\nNo response from these ${groupInfo.timeouts.length} hops\nUsed in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick to expand or see details`,
-            color: { 
-              background: "#D32F2F", 
+            color: {
+              background: "#D32F2F",
               border: "#8B0000"
             },
             font: {
@@ -950,8 +937,8 @@ const NetworkGraph = React.memo(({
               id: nodeId,
               label: "⏱️ Timeout",
               title: `Timeout Hop #${timeout.hopNumber}\nNo response from this hop\nUsed in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick for detailed information`,
-              color: { 
-                background: "#F44336", 
+              color: {
+                background: "#F44336",
                 border: "#D32F2F"
               },
               font: {
@@ -997,8 +984,8 @@ const NetworkGraph = React.memo(({
           id: nodeId,
           label: "⏱️ Timeout",
           title: `Timeout Hop #${firstHopDetails?.hopNumber || '?'}\nNo response from this hop\nUsed in ${destinations.size} destination(s), ${pathTypes.size} path type(s)\nClick for detailed information`,
-          color: { 
-            background: "#F44336", 
+          color: {
+            background: "#F44336",
             border: "#D32F2F"
           },
           font: {
@@ -1035,12 +1022,12 @@ const NetworkGraph = React.memo(({
       Object.keys(filteredData).forEach((destination, index) => {
         const nodeId = getOrCreateNodeId(`dest:${destination}`);
         const destData = filteredData[destination];
-        // Use the index from selectedDestinations to match the list colors
         const destColorIndex = selectedDestinations.indexOf(destination);
         const destColor = generateDestinationColor(destColorIndex);
-        const totalPaths = showPrimaryOnly ? 1 : (1 + destData.alternatives.length);
+        const totalPaths = showPrimaryOnly
+          ? ((destData.includePrimary !== false && destData.primary_path) ? 1 : 0)
+          : ((destData.includePrimary !== false && destData.primary_path ? 1 : 0) + (destData.alternatives?.length || 0));
 
-        // Use optimized position for destinations
         const optimizedPosition = optimizedPositions.get(`dest:${destination}`) || index;
         const spacing = 80;
         const yPosition = optimizedPosition * spacing - ((Object.keys(filteredData).length - 1) * spacing / 2);
@@ -1048,9 +1035,16 @@ const NetworkGraph = React.memo(({
         nodes.push({
           id: nodeId,
           label: destination,
-          title: `Destination: ${destination}\nTotal traces: ${destData.total_traces}\nTotal paths: ${totalPaths}\nPrimary: ${destData.primary_path.percent}% (${destData.primary_path.count} traces)\nAlternatives: ${showPrimaryOnly ? 'Hidden' : destData.alternatives.length}`,
-          color: { 
-            background: destColor, 
+          title:
+            `Destination: ${destination}\n` +
+            `Total traces: ${destData.total_traces ?? 'N/A'}\n` +
+            `Total paths: ${totalPaths}\n` +
+            `Primary: ${destData.primary_path
+              ? `${destData.primary_path.percent}% (${destData.primary_path.count} traces, avg ${destData.primary_path.avg_rtt}ms)`
+              : 'N/A'}\n` +
+            `Alternatives: ${showPrimaryOnly ? 'Hidden' : (destData.alternatives?.length || 0)}`,
+          color: {
+            background: destColor,
             border: "#333"
           },
           font: {
@@ -1073,9 +1067,11 @@ const NetworkGraph = React.memo(({
         if (!pathMapping.has(nodeId)) {
           pathMapping.set(nodeId, new Set());
         }
-        pathMapping.get(nodeId).add(primaryPathId);
-        
-        destData.alternatives.forEach((altPath, altIndex) => {
+        if (destData.includePrimary !== false && destData.primary_path) {
+          pathMapping.get(nodeId).add(primaryPathId);
+        }
+
+        (destData.alternatives || []).forEach((altPath, altIndex) => {
           const altPathId = `${destination}-ALTERNATIVE ${altIndex + 1}`;
           pathMapping.get(nodeId).add(altPathId);
         });
@@ -1086,16 +1082,16 @@ const NetworkGraph = React.memo(({
       // Verify no duplicate IDs
       const nodeIds = nodes.map(n => n.id);
       const uniqueNodeIds = new Set(nodeIds);
-      
+
       if (nodeIds.length !== uniqueNodeIds.size) {
         console.error('DUPLICATE NODE IDs DETECTED!');
         console.error('All node IDs:', nodeIds);
         console.error('Unique node IDs:', Array.from(uniqueNodeIds));
-        
+
         // Find duplicates
         const duplicates = nodeIds.filter((id, index) => nodeIds.indexOf(id) !== index);
         console.error('Duplicate IDs:', duplicates);
-        
+
         // Return empty graph to prevent vis.js error
         return { nodes: [], edges: [], nodeDetails: new Map(), pathMapping: new Map() };
       }
@@ -1117,11 +1113,11 @@ const NetworkGraph = React.memo(({
 
           primaryPath.path.forEach((hopObj, hopIndex) => {
             let currentNodeId;
-            
+
             if (hopObj.is_timeout || !hopObj.ip || hopObj.ip === 'null' || hopObj.ip === null) {
               // Handle timeout hop - check if it's part of a group
               const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_primary`;
-              
+
               // Check if this timeout is part of a grouped timeout
               let isGrouped = false;
               for (const [groupKey, groupInfo] of timeoutGroups) {
@@ -1134,7 +1130,7 @@ const NetworkGraph = React.memo(({
                   }
                 }
               }
-              
+
               if (!isGrouped) {
                 // Use individual timeout node
                 currentNodeId = getOrCreateNodeId(`timeout:${timeoutKey}`);
@@ -1144,7 +1140,7 @@ const NetworkGraph = React.memo(({
               if (showPrefixAggregation) {
                 const prefix = dataTransformer.getNetworkPrefix(hopObj.ip);
                 const prefixIps = prefixGroups[prefix] || [hopObj.ip];
-                
+
                 if (prefixIps.length > 1 && !expandedPrefixes.has(prefix)) {
                   // Use prefix node
                   currentNodeId = getOrCreateNodeId(`prefix:${prefix}`);
@@ -1156,7 +1152,7 @@ const NetworkGraph = React.memo(({
                 currentNodeId = getOrCreateNodeId(`ip:${hopObj.ip}`);
               }
             }
-            
+
             const edgeKey = createEdgeKey(lastNodeId, currentNodeId);
 
             // Track edge usage by destination
@@ -1185,17 +1181,18 @@ const NetworkGraph = React.memo(({
 
         // Alternative path edges (if not showPrimaryOnly)
         if (!showPrimaryOnly) {
-          destData.alternatives.forEach((altPath, altIndex) => {
+          (destData.alternatives || []).forEach((altPath, altIndex) => {
+
             const pathId = `${destination}-ALTERNATIVE ${altIndex + 1}`;
             let lastNodeId = sourceId;
 
             altPath.path.forEach((hopObj, hopIndex) => {
               let currentNodeId;
-              
+
               if (hopObj.is_timeout || !hopObj.ip || hopObj.ip === 'null' || hopObj.ip === null) {
                 // Handle timeout hop - check if it's part of a group
                 const timeoutKey = `timeout_${hopObj.hop_number || (hopIndex + 1)}_${destination}_alt${altIndex}`;
-                
+
                 // Check if this timeout is part of a grouped timeout
                 let isGrouped = false;
                 for (const [groupKey, groupInfo] of timeoutGroups) {
@@ -1208,7 +1205,7 @@ const NetworkGraph = React.memo(({
                     }
                   }
                 }
-                
+
                 if (!isGrouped) {
                   // Use individual timeout node
                   currentNodeId = getOrCreateNodeId(`timeout:${timeoutKey}`);
@@ -1218,7 +1215,7 @@ const NetworkGraph = React.memo(({
                 if (showPrefixAggregation) {
                   const prefix = dataTransformer.getNetworkPrefix(hopObj.ip);
                   const prefixIps = prefixGroups[prefix] || [hopObj.ip];
-                  
+
                   if (prefixIps.length > 1 && !expandedPrefixes.has(prefix)) {
                     // Use prefix node
                     currentNodeId = getOrCreateNodeId(`prefix:${prefix}`);
@@ -1265,18 +1262,18 @@ const NetworkGraph = React.memo(({
         const [fromStr, toStr] = edgeKey.split('->');
         const fromId = parseInt(fromStr);
         const toId = parseInt(toStr);
-        
+
         const uniqueColors = [...new Set(usage.colors)];
 
         // Use normal edge styling (highlighting will be applied separately)
-          const edgeColorObj = createMultiPathColor(uniqueColors);
+        const edgeColorObj = createMultiPathColor(uniqueColors);
         const edgeColor = edgeColorObj.color;
         const edgeDashes = uniqueColors.length > 1 ? [5, 5] : false;
         const edgeWidth = 2;
 
         // Create tooltip
         const tooltip = `Used by: ${Array.from(usage.destinations).join(', ')}\nPaths: ${usage.paths.size}\nClick to highlight path`;
-        
+
         const edge = {
           id: `edge_${edgeId++}`,
           from: fromId,
@@ -1309,12 +1306,12 @@ const NetworkGraph = React.memo(({
     };
 
     const { nodes, edges, nodeDetails, pathMapping } = createGraphData();
-    return { 
-      graph: { nodes, edges }, 
+    return {
+      graph: { nodes, edges },
       nodeDetails,
       pathMapping
     };
-  }, [graphKey, pathData, generateDestinationColor, showPrimaryOnly, createMultiPathColor, selectedDestinations, dateRange, minRTT, maxRTT, minUsagePercent, selectedPathTypes, expandedPrefixes, showPrefixAggregation]);
+  }, [graphKey, filteredByHook, generateDestinationColor, showPrimaryOnly, createMultiPathColor, selectedDestinations, dateRange, expandedPrefixes, showPrefixAggregation]);
 
   // Function to trace ALL paths from a node/edge
   const traceAllPaths = useCallback((elementId, elementType) => {
@@ -1331,7 +1328,7 @@ const NetworkGraph = React.memo(({
     paths.forEach(pathId => {
       const [destination, pathType] = pathId.split('-', 2);
       const isPrimary = pathType === 'PRIMARY';
-      
+
       // Find all nodes and edges that belong to this specific path
       const pathNodes = [];
       const pathEdges = [];
@@ -1353,7 +1350,7 @@ const NetworkGraph = React.memo(({
 
       // Assign a base color to this path
       const baseColor = pathHighlightColors[colorIndex % pathHighlightColors.length];
-      
+
       // Adjust color intensity based on path type
       let highlightColor;
       if (isPrimary) {
@@ -1363,7 +1360,7 @@ const NetworkGraph = React.memo(({
         // Alternative paths: use lighter version (reduce opacity/saturation)
         highlightColor = adjustColorIntensity(baseColor, 0.6); // 60% intensity
       }
-      
+
       colorIndex++;
 
       // Ensure all required properties are present
@@ -1427,78 +1424,78 @@ const NetworkGraph = React.memo(({
   // Download graph as PNG
   const downloadAsPNG = useCallback(() => {
     if (!graphContainerRef.current || !networkInstance) return;
-    
+
     // Find the vis.js canvas element specifically
     const visCanvas = graphContainerRef.current.querySelector('canvas');
     if (!visCanvas) {
       alert('Graph not ready for export. Please try again.');
       return;
     }
-    
+
     try {
       // Get all node positions to calculate bounds
       const nodeIds = graph.nodes.map(node => node.id);
       const positions = networkInstance.getPositions(nodeIds);
-      
+
       if (Object.keys(positions).length === 0) {
         alert('Graph layout not ready. Please wait a moment and try again.');
         return;
       }
-      
+
       // Calculate the bounding box of all nodes
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      
+
       Object.values(positions).forEach(pos => {
         minX = Math.min(minX, pos.x);
         maxX = Math.max(maxX, pos.x);
         minY = Math.min(minY, pos.y);
         maxY = Math.max(maxY, pos.y);
       });
-      
+
       // Add padding around the content (node sizes + margin)
       const padding = 80;
       minX -= padding;
       maxX += padding;
       minY -= padding;
       maxY += padding;
-      
+
       // High quality scale factor
       const scale = 3;
-      
+
       // Get the network's current view
       const viewPosition = networkInstance.getViewPosition();
       const canvasScale = networkInstance.getScale();
-      
+
       // Calculate the transform to center the content
       const canvasWidth = visCanvas.width;
       const canvasHeight = visCanvas.height;
       const centerX = canvasWidth / 2;
       const centerY = canvasHeight / 2;
-      
+
       // Transform coordinates from network space to canvas space
       const canvasMinX = (minX - viewPosition.x) * canvasScale + centerX;
       const canvasMinY = (minY - viewPosition.y) * canvasScale + centerY;
       const canvasMaxX = (maxX - viewPosition.x) * canvasScale + centerX;
       const canvasMaxY = (maxY - viewPosition.y) * canvasScale + centerY;
-      
+
       const canvasContentWidth = canvasMaxX - canvasMinX;
       const canvasContentHeight = canvasMaxY - canvasMinY;
-      
+
       // Create high-resolution export canvas
       const exportCanvas = document.createElement('canvas');
       const ctx = exportCanvas.getContext('2d');
-      
+
       exportCanvas.width = canvasContentWidth * scale;
       exportCanvas.height = canvasContentHeight * scale;
-      
+
       // Fill with white background
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-      
+
       // Enable high-quality rendering
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      
+
       // Scale and draw the cropped portion
       ctx.scale(scale, scale);
       ctx.drawImage(
@@ -1506,13 +1503,13 @@ const NetworkGraph = React.memo(({
         canvasMinX, canvasMinY, canvasContentWidth, canvasContentHeight, // Source crop
         0, 0, canvasContentWidth, canvasContentHeight // Destination
       );
-      
+
       // Download the high-quality cropped image
       const link = document.createElement('a');
       link.download = `network-graph-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
       link.href = exportCanvas.toDataURL('image/png');
       link.click();
-      
+
     } catch (error) {
       console.error('Error creating cropped PNG:', error);
       alert('Error creating PNG. Please try again.');
@@ -1522,77 +1519,77 @@ const NetworkGraph = React.memo(({
   // Download graph as SVG
   const downloadAsSVG = useCallback(() => {
     if (!graphContainerRef.current || !networkInstance) return;
-    
+
     // Find the vis.js canvas element specifically
     const visCanvas = graphContainerRef.current.querySelector('canvas');
     if (!visCanvas) {
       alert('Graph not ready for export. Please try again.');
       return;
     }
-    
+
     try {
       // Get all node positions to calculate bounds
       const nodeIds = graph.nodes.map(node => node.id);
       const positions = networkInstance.getPositions(nodeIds);
-      
+
       if (Object.keys(positions).length === 0) {
         alert('Graph layout not ready. Please wait a moment and try again.');
         return;
       }
-      
+
       // Calculate the bounding box of all nodes
       let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      
+
       Object.values(positions).forEach(pos => {
         minX = Math.min(minX, pos.x);
         maxX = Math.max(maxX, pos.x);
         minY = Math.min(minY, pos.y);
         maxY = Math.max(maxY, pos.y);
       });
-      
+
       // Add padding around the content
       const padding = 80;
       minX -= padding;
       maxX += padding;
       minY -= padding;
       maxY += padding;
-      
+
       // High quality scale factor
       const scale = 3;
-      
+
       // Get the network's current view
       const viewPosition = networkInstance.getViewPosition();
       const canvasScale = networkInstance.getScale();
-      
+
       // Calculate canvas coordinates
       const canvasWidth = visCanvas.width;
       const canvasHeight = visCanvas.height;
       const centerX = canvasWidth / 2;
       const centerY = canvasHeight / 2;
-      
+
       const canvasMinX = (minX - viewPosition.x) * canvasScale + centerX;
       const canvasMinY = (minY - viewPosition.y) * canvasScale + centerY;
       const canvasMaxX = (maxX - viewPosition.x) * canvasScale + centerX;
       const canvasMaxY = (maxY - viewPosition.y) * canvasScale + centerY;
-      
+
       const canvasContentWidth = canvasMaxX - canvasMinX;
       const canvasContentHeight = canvasMaxY - canvasMinY;
-      
+
       // Create high-resolution cropped canvas
       const cleanCanvas = document.createElement('canvas');
       const ctx = cleanCanvas.getContext('2d');
-      
+
       cleanCanvas.width = canvasContentWidth * scale;
       cleanCanvas.height = canvasContentHeight * scale;
-      
+
       // Fill with white background
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, 0, cleanCanvas.width, cleanCanvas.height);
-      
+
       // Enable high-quality rendering
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      
+
       // Scale and draw the cropped portion
       ctx.scale(scale, scale);
       ctx.drawImage(
@@ -1600,7 +1597,7 @@ const NetworkGraph = React.memo(({
         canvasMinX, canvasMinY, canvasContentWidth, canvasContentHeight,
         0, 0, canvasContentWidth, canvasContentHeight
       );
-      
+
       // Create SVG with exact cropped dimensions
       const svgWidth = cleanCanvas.width;
       const svgHeight = cleanCanvas.height;
@@ -1617,7 +1614,7 @@ const NetworkGraph = React.memo(({
       link.href = URL.createObjectURL(blob);
       link.click();
       URL.revokeObjectURL(link.href);
-      
+
     } catch (error) {
       console.error('Error creating cropped SVG:', error);
       alert('Error creating SVG. Please try again.');
@@ -1649,85 +1646,85 @@ const NetworkGraph = React.memo(({
 
   const [layoutOptimization] = useState('minimal-crossings');
 
-const options = useMemo(() => {
-  const baseOptions = {
-    nodes: {
-      font: { face: 'Arial' },
-      margin: 10,
-      fixed:true,
-      chosen: {
-        node: function(values, id, selected, hovering) {
-          values.borderColor = '#2196F3';
-          values.borderWidth = 2;
+  const options = useMemo(() => {
+    const baseOptions = {
+      nodes: {
+        font: { face: 'Arial' },
+        margin: 10,
+        fixed: true,
+        chosen: {
+          node: function (values, id, selected, hovering) {
+            values.borderColor = '#2196F3';
+            values.borderWidth = 2;
+          }
         }
-      }
-    },
-    interaction: {
-      dragNodes: true,
-      zoomView: true,
-      dragView: true,
-      selectConnectedEdges: false
-    },
-    configure: { enabled: false }
-  };
+      },
+      interaction: {
+        dragNodes: true,
+        zoomView: true,
+        dragView: true,
+        selectConnectedEdges: false
+      },
+      configure: { enabled: false }
+    };
 
-  switch(layoutOptimization) {
-    case 'minimal-crossings':
-      return {
-        ...baseOptions,
-        layout: {
-          hierarchical: {
-            enabled: true,
-            direction: "LR",
-            sortMethod: "directed",
-            shakeTowards: "leaves",
-            nodeSpacing: 80,
-            treeSpacing: 60,
-            levelSeparation: 250,
-            blockShifting: true,
-            edgeMinimization: true,
-            parentCentralization: false
-          }
-        },
-        physics: { enabled: false },
-        edges: {
-          smooth: { 
-            type: "continuous",
-            roundness: 0.1,
-            forceDirection: "horizontal"
+    switch (layoutOptimization) {
+      case 'minimal-crossings':
+        return {
+          ...baseOptions,
+          layout: {
+            hierarchical: {
+              enabled: true,
+              direction: "LR",
+              sortMethod: "directed",
+              shakeTowards: "leaves",
+              nodeSpacing: 80,
+              treeSpacing: 60,
+              levelSeparation: 250,
+              blockShifting: true,
+              edgeMinimization: true,
+              parentCentralization: false
+            }
           },
-          chosen: false
-        }
-      };
-      
-    case 'ultra-clean':
-      return {
-        ...baseOptions,
-        layout: {
-          hierarchical: {
-            enabled: true,
-            direction: "LR",
-            sortMethod: "directed",
-            shakeTowards: "leaves",
-            nodeSpacing: 120,
-            treeSpacing: 100,
-            levelSeparation: 300,
-            blockShifting: true,
-            edgeMinimization: true,
-            parentCentralization: false
+          physics: { enabled: false },
+          edges: {
+            smooth: {
+              type: "continuous",
+              roundness: 0.1,
+              forceDirection: "horizontal"
+            },
+            chosen: false
           }
-        },
-        physics: { enabled: false },
-        edges: {
-          smooth: false, // Straight lines only
-          chosen: false
-        }
-      };
-      
-    default:
-      return baseOptions;
-  }
-}, [layoutOptimization]);
+        };
+
+      case 'ultra-clean':
+        return {
+          ...baseOptions,
+          layout: {
+            hierarchical: {
+              enabled: true,
+              direction: "LR",
+              sortMethod: "directed",
+              shakeTowards: "leaves",
+              nodeSpacing: 120,
+              treeSpacing: 100,
+              levelSeparation: 300,
+              blockShifting: true,
+              edgeMinimization: true,
+              parentCentralization: false
+            }
+          },
+          physics: { enabled: false },
+          edges: {
+            smooth: false, // Straight lines only
+            chosen: false
+          }
+        };
+
+      default:
+        return baseOptions;
+    }
+  }, [layoutOptimization]);
 
   // Enhanced hop selection handler that fetches IP geolocation data
   const handleHopSelection = useCallback(async (nodeData) => {
@@ -1769,12 +1766,12 @@ const options = useMemo(() => {
       try {
         console.log('Fetching geolocation for IPs:', uniqueIPs);
         const ipInfoMap = new Map();
-        
+
         // Fetch IP info for each unique IP (with caching)
         for (const ip of uniqueIPs) {
           const ipInfo = await ipGeoService.getIPInfo(ip);
           console.log(`IP ${ip} geolocation result:`, ipInfo);
-          
+
           if (ipInfo) {
             // Format the raw API response (getIPInfo returns raw data, even from cache)
             const formattedInfo = ipGeoService.formatIPInfo(ipInfo);
@@ -1798,10 +1795,10 @@ const options = useMemo(() => {
 
         console.log('Updating hop data with geolocation info');
         onHopSelect(enhancedNodeData);
-        
+
       } catch (error) {
         console.error('Error fetching IP geolocation data:', error);
-        
+
         // Remove loading state and keep original data
         const errorNodeData = nodeData.map(hop => {
           if (hop.ip && !hop.is_timeout) {
@@ -1813,7 +1810,7 @@ const options = useMemo(() => {
           }
           return hop;
         });
-        
+
         onHopSelect(errorNodeData);
       }
     }
@@ -1821,26 +1818,26 @@ const options = useMemo(() => {
 
   // Memoize events to prevent unnecessary re-renders
   const events = useMemo(() => ({
-    select: function(event) {
+    select: function (event) {
       event.preventDefault?.(); // Prevent default browser behavior
       const { nodes, edges } = event;
       if (nodes.length > 0) {
         const nodeId = nodes[0];
         const nodeData = nodeDetails.get(nodeId);
-        
+
         // Handle prefix node clicks
         const node = graph.nodes.find(n => n.id === nodeId);
         if (node?.nodeType === 'prefix') {
           handlePrefixToggle(node.prefix);
           return;
         }
-        
+
         // Handle timeout group node clicks
         if (node?.nodeType === 'timeout_group') {
           handlePrefixToggle(node.timeoutGroup);
           return;
         }
-        
+
         if (nodeData && Array.isArray(nodeData)) {
           handleHopSelection(nodeData); // Use enhanced handler
           highlightPath(nodeId, 'node');
@@ -1854,17 +1851,17 @@ const options = useMemo(() => {
         clearHighlight();
       }
     },
-    click: function(event) {
+    click: function (event) {
       event.preventDefault?.(); // Prevent default browser behavior
       if (event.nodes.length === 0 && event.edges.length === 0) {
         onHopSelect(null);
         clearHighlight();
       }
     },
-    hoverNode: function(event) {
+    hoverNode: function (event) {
       // Custom hover behavior if needed
     },
-    hoverEdge: function(event) {
+    hoverEdge: function (event) {
       // Show edge information on hover
     }
   }), [nodeDetails, handleHopSelection, clearHighlight, graph, handlePrefixToggle, highlightPath, onHopSelect]);
@@ -1907,7 +1904,7 @@ const options = useMemo(() => {
     // Apply highlighting styles to nodes
     const highlightedNodes = graph.nodes.map(node => {
       const nodeHighlight = getNodeHighlightStyle(node.id);
-      
+
       if (nodeHighlight.isHighlighted) {
         return {
           ...node,
@@ -1932,22 +1929,22 @@ const options = useMemo(() => {
           opacity: 0.3
         };
       }
-      
+
       return node;
     });
 
     // Apply highlighting styles to edges
     const highlightedEdges = graph.edges.map(edge => {
       const edgeHighlight = getEdgeHighlightStyle(edge.from, edge.to);
-      
+
       if (edgeHighlight.isHighlighted) {
         // Use the first highlighted path's color
         const edgeColor = edgeHighlight.colors[0];
-        
+
         // Determine line style
         const hasSolid = edgeHighlight.lineStyles.some(style => style === 'solid');
         const hasDashed = edgeHighlight.lineStyles.some(style => style === 'dashed');
-        
+
         let edgeDashes, edgeWidth;
         if (hasSolid && hasDashed) {
           // Mixed: use dashed but thicker to indicate both
@@ -1982,7 +1979,7 @@ const options = useMemo(() => {
           }
         };
       }
-      
+
       return edge;
     });
 
@@ -2003,7 +2000,7 @@ const options = useMemo(() => {
           getNetwork={getNetwork}
         />
       </GraphErrorBoundary>
-      
+
       {/* Path Highlighting Controls */}
       {highlightedPaths.length > 0 && (
         <div style={{
@@ -2028,7 +2025,7 @@ const options = useMemo(() => {
           }}>
             🔍 {highlightedPaths.length > 1 ? `${highlightedPaths.length} Paths` : 'Path'} Highlighted
           </div>
-          
+
           {highlightedPaths.map((path, index) => (
             <div key={path?.id || index} style={{
               marginBottom: index < highlightedPaths.length - 1 ? "10px" : "0",
@@ -2056,18 +2053,18 @@ const options = useMemo(() => {
                   {path?.destination || "Unknown"}
                 </div>
               </div>
-              
+
               <div style={{ fontSize: "11px", color: "#666", marginLeft: "20px" }}>
-                <strong>Type:</strong> {path?.pathType || "Unknown"} 
-                {path?.isPrimary ? 
-                  <span style={{ color: "#28a745", marginLeft: "4px" }}>●</span> : 
+                <strong>Type:</strong> {path?.pathType || "Unknown"}
+                {path?.isPrimary ?
+                  <span style={{ color: "#28a745", marginLeft: "4px" }}>●</span> :
                   <span style={{ color: "#6c757d", marginLeft: "4px" }}>⋯</span>
-                }<br/>
+                }<br />
                 <strong>Nodes:</strong> {path?.nodes?.length || 0} | <strong>Edges:</strong> {path?.edges?.length || 0}
               </div>
             </div>
           ))}
-          
+
           <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #eee" }}>
             <button
               onClick={clearHighlight}
@@ -2087,7 +2084,7 @@ const options = useMemo(() => {
           </div>
         </div>
       )}
-      
+
       {/* Instructions */}
       {!isFullscreen && (
         <div style={{
@@ -2101,13 +2098,13 @@ const options = useMemo(() => {
           border: "1px solid #ccc",
           maxWidth: "220px"
         }}>
-          💡 <strong>Click:</strong> Node/edge to highlight all paths<br/>
-          🎨 <strong>Colors:</strong> Different paths shown in unique colors<br/>
-          📍 <strong>Lines:</strong> Solid (primary) ⋯ Dashed (alternative)<br/>
+          💡 <strong>Click:</strong> Node/edge to highlight all paths<br />
+          🎨 <strong>Colors:</strong> Different paths shown in unique colors<br />
+          📍 <strong>Lines:</strong> Solid (primary) ⋯ Dashed (alternative)<br />
           🎯 <strong>Empty space:</strong> Clear highlighting
         </div>
       )}
-      
+
       {/* Zoom Controls */}
 
       <div className="zoom-controls">
@@ -2116,7 +2113,7 @@ const options = useMemo(() => {
           title={isFullscreen ? "Exit Fullscreen (ESC)" : "Enter Fullscreen"}
           className="zoom-button fullscreen"
         >
-          {isFullscreen ? "➡" : "⬅" }
+          {isFullscreen ? "➡" : "⬅"}
         </button>
         <button
           onClick={handleZoomIn}
@@ -2125,7 +2122,7 @@ const options = useMemo(() => {
         >
           +
         </button>
-        
+
         <button
           onClick={handleZoomOut}
           title="Zoom Out"
@@ -2133,9 +2130,9 @@ const options = useMemo(() => {
         >
           −
         </button>
-        
-        
-        
+
+
+
         <button
           onClick={handleResetZoom}
           title="Fit to Screen"
@@ -2143,10 +2140,10 @@ const options = useMemo(() => {
         >
           ◎
         </button>
-        
+
         {/* Download Controls */}
         <div style={{ height: "8px" }}></div>
-        
+
         <button
           onClick={downloadAsPNG}
           title="Download as PNG"
@@ -2155,7 +2152,7 @@ const options = useMemo(() => {
         >
           PNG
         </button>
-        
+
         <button
           onClick={downloadAsSVG}
           title="Download as SVG"

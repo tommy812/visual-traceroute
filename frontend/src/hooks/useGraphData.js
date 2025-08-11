@@ -6,89 +6,84 @@ export const useGraphData = (pathData, filters) => {
     maxRTT,
     minUsagePercent,
     selectedPathTypes,
-    showPrimaryOnly
+    showPrimaryOnly,           // NOTE: missing comma was causing a parse error
+    selectedProtocol
   } = filters;
 
-  // Filter data based on current filters
   const filteredData = useMemo(() => {
-    if (!pathData || Object.keys(pathData).length === 0) {
-      return {};
-    }
+    if (!pathData || Object.keys(pathData).length === 0) return {};
 
-    const filtered = {};
+    const numericMinRTT = minRTT ? parseFloat(minRTT) : null;
+    const numericMaxRTT = maxRTT ? parseFloat(maxRTT) : null;
+    const numericMinUsage = minUsagePercent ? parseFloat(minUsagePercent) : null;
+
+    const normalize = (v) => (typeof v === 'string' ? v.trim().toUpperCase() : null);
+    const selProto = normalize(selectedProtocol);
+
+    const matchesProtocol = (p) => {
+      if (!selProto) return true;
+      if (!p) return false;
+
+      // path-level protocol
+      const pathProto = normalize(p.protocol);
+      if (pathProto && pathProto === selProto) return true;
+
+      // hop-level protocol (your paths use 'path', keep 'hops' as fallback)
+      const hops = Array.isArray(p.path) ? p.path : (Array.isArray(p.hops) ? p.hops : []);
+      return hops.some(h => normalize(h?.protocol) === selProto);
+    };
+
+    const result = {};
 
     Object.entries(pathData).forEach(([destination, destinationData]) => {
-      const filteredData = {};
+      const out = {};
 
-      // Filter primary path
+      // Primary
       if (destinationData.primary_path && selectedPathTypes.includes('PRIMARY')) {
-        const primaryPath = destinationData.primary_path;
-        let includePrimary = true;
+        const p = destinationData.primary_path;
+        let ok = true;
 
-        // Apply RTT filters
-        if (minRTT && primaryPath.avg_rtt < parseFloat(minRTT)) {
-          includePrimary = false;
-        }
-        if (maxRTT && primaryPath.avg_rtt > parseFloat(maxRTT)) {
-          includePrimary = false;
-        }
+        if (selectedProtocol && !matchesProtocol(p)) ok = false;
+        if (ok && numericMinRTT !== null && p.avg_rtt < numericMinRTT) ok = false;
+        if (ok && numericMaxRTT !== null && p.avg_rtt > numericMaxRTT) ok = false;
+        if (ok && numericMinUsage !== null && p.percent < numericMinUsage) ok = false;
 
-        // Apply usage percent filter
-        if (minUsagePercent && primaryPath.percent < parseFloat(minUsagePercent)) {
-          includePrimary = false;
-        }
-
-        if (includePrimary) {
-          filteredData.primary_path = primaryPath;
-        }
+        if (ok) out.primary_path = p;
       }
 
-      // Filter alternative paths
-      if (destinationData.alternatives && selectedPathTypes.includes('ALTERNATIVE')) {
-        const validAlternatives = destinationData.alternatives.filter(altPath => {
-          let isValid = true;
-
-          // Apply RTT filters
-          if (minRTT && altPath.avg_rtt < parseFloat(minRTT)) {
-            isValid = false;
-          }
-          if (maxRTT && altPath.avg_rtt > parseFloat(maxRTT)) {
-            isValid = false;
-          }
-
-          // Apply usage percent filter
-          if (minUsagePercent && altPath.percent < parseFloat(minUsagePercent)) {
-            isValid = false;
-          }
-
-          return isValid;
+      // Alternatives
+      if (Array.isArray(destinationData.alternatives) && selectedPathTypes.includes('ALTERNATIVE')) {
+        const alts = destinationData.alternatives.filter(a => {
+          if (selectedProtocol && !matchesProtocol(a)) return false;
+          if (numericMinRTT !== null && a.avg_rtt < numericMinRTT) return false;
+          if (numericMaxRTT !== null && a.avg_rtt > numericMaxRTT) return false;
+          if (numericMinUsage !== null && a.percent < numericMinUsage) return false;
+          return true;
         });
-
-        if (validAlternatives.length > 0) {
-          filteredData.alternatives = validAlternatives;
-        }
+        if (alts.length) out.alternatives = alts;
       }
 
-      // Apply show primary only filter
       if (showPrimaryOnly) {
-        delete filteredData.alternatives;
+        delete out.alternatives;
       }
 
-      // Only include destination if it has valid data
-      const includePrimary = filteredData.primary_path;
-      const validAlternatives = filteredData.alternatives || [];
-
-      if (includePrimary || validAlternatives.length > 0) {
-        filteredData.alternatives = validAlternatives;
-        filteredData.includePrimary = includePrimary;
-        filtered[destination] = filteredData;
+      if (out.primary_path || (out.alternatives && out.alternatives.length)) {
+        // Preserve metadata you use in tooltips
+        if (destinationData.total_traces != null) out.total_traces = destinationData.total_traces;
+        result[destination] = out;
       }
     });
 
-    return filtered;
-  }, [pathData, minRTT, maxRTT, minUsagePercent, selectedPathTypes, showPrimaryOnly]);
+    return result;
+  }, [
+    pathData,
+    minRTT,
+    maxRTT,
+    minUsagePercent,
+    selectedPathTypes,
+    showPrimaryOnly,
+    selectedProtocol
+  ]);
 
-  return {
-    filteredData
-  };
-}; 
+  return { filteredData };
+};

@@ -133,6 +133,8 @@ const AdvancedFilters = ({
         />
       </div>
 
+
+{/* TODO add show most used path, show fastest path */}
       <div style={{ marginBottom: "10px" }}>
         <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
           Display Options:
@@ -144,7 +146,7 @@ const AdvancedFilters = ({
             onChange={(e) => setShowPrimaryOnly(e.target.checked)}
             style={{ margin: 0, transform: "scale(0.8)" }}
           />
-          <span style={{ fontSize: "11px" }}>Show Primary Paths Only</span>
+          <span style={{ fontSize: "11px" }}>Show Most Used Path</span>
         </label>
       </div>
 

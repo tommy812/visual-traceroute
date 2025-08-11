@@ -106,7 +106,7 @@ const App = React.memo(() => {
 
   // Filtered destinations
   const filteredDestinations = React.useMemo(
-    () => getFilteredDestinations(filters.destinationSearchTerm),
+    () => getFilteredDestinations(filters.destinationSearchTerm,),
     [getFilteredDestinations, filters.destinationSearchTerm]
   );
 

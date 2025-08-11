@@ -41,6 +41,52 @@ class DataTransformer {
   }
 
 
+  // Helper: pick most common non-null protocol from a list of paths
+  getMostCommonProtocol(paths) {
+    const freq = new Map();
+    for (const p of paths || []) {
+      const proto = p?.protocol ?? null;
+      if (!proto) continue;
+      freq.set(proto, (freq.get(proto) || 0) + 1);
+    }
+    let best = null, max = 0;
+    freq.forEach((count, proto) => {
+      if (count > max) { max = count; best = proto; }
+    });
+    return best;
+  }
+
+
+  /**
+   * Aggregate hop data across multiple paths
+   */
+  aggregateHopData(pathGroup) {
+    if (!Array.isArray(pathGroup) || pathGroup.length === 0) return [];
+
+    const templatePath = pathGroup[0].path;
+
+    return templatePath.map((templateHop, hopIndex) => {
+      const allRtts = [];
+      pathGroup.forEach(p => {
+        if (p.path[hopIndex] && Array.isArray(p.path[hopIndex].rtt_ms)) {
+          allRtts.push(...p.path[hopIndex].rtt_ms);
+        }
+      });
+
+      return {
+        hop_number: templateHop.hop_number,
+        ip: templateHop.ip,
+        hostname: templateHop.hostname,
+        rtt_ms: allRtts.length > 0 ? allRtts : (templateHop.rtt_ms || []),
+        is_timeout: templateHop.is_timeout,
+        // preserve hop protocol so frontend can match by hop-level protocol
+        protocol: templateHop.protocol ?? null
+      };
+    });
+  }
+  
+
+
   /**
    * Transform a destination's trace runs into the expected format
    */
@@ -61,41 +107,58 @@ class DataTransformer {
     };
   }
 
+  normalizeProtocol(value) {
+    if (value == null) return null;
+    const s = String(value).trim();
+    return s ? s.toUpperCase() : null;
+  }
+
   /**
    * Convert a single trace run to path format
    */
   convertTraceRunToPath(traceRun) {
+    // Derive protocol from the joined traceroute_methods
+    const pathProtocol = this.normalizeProtocol(
+      traceRun?.traceroute_methods?.description ??
+      traceRun?.traceroute_methods?.name ??
+      traceRun?.probe_protocol ??
+      traceRun?.protocol
+    );
+
     if (!traceRun.hops || !Array.isArray(traceRun.hops)) {
       return {
         path: [],
         count: 1,
         percent: 0,
         avg_rtt: 0,
-        timeStamp: traceRun.timestamp || new Date().toISOString()
+        timeStamp: traceRun.timestamp || new Date().toISOString(),
+        protocol: pathProtocol
       };
     }
 
     // Sort hops by hop number
     const sortedHops = [...traceRun.hops].sort((a, b) => a.hop_number - b.hop_number);
 
-    // Transform hops to frontend format, including null hops
+    // Transform hops and stamp hop-level protocol (same as path)
     const path = sortedHops.map(hop => ({
       hop_number: hop.hop_number,
-      ip: hop.ip || null, // Keep null IPs
+      ip: hop.ip || null,
       hostname: hop.hostname,
       rtt_ms: this.convertRttToArray(hop.rtt1, hop.rtt2, hop.rtt3),
-      is_timeout: !hop.ip || hop.ip === 'null' || hop.ip === null // Mark timeout hops
+      is_timeout: !hop.ip || hop.ip === 'null' || hop.ip === null,
+      protocol: pathProtocol
     }));
 
     // Calculate average RTT for the path
     const avgRtt = this.calculatePathAverageRtt(path);
 
     return {
-      path: path,
-      count: 1, // Individual trace run
-      percent: 0, // Will be calculated later
+      path,
+      count: 1,
+      percent: 0,
       avg_rtt: avgRtt,
-      timeStamp: traceRun.timestamp || new Date().toISOString()
+      timeStamp: traceRun.timestamp || new Date().toISOString(),
+      protocol: pathProtocol
     };
   }
 
@@ -248,7 +311,8 @@ class DataTransformer {
         count: 0,
         percent: 0,
         avg_rtt: 0,
-        timeStamp: new Date().toISOString()
+        timeStamp: new Date().toISOString(),
+        protocol: null
       };
     }
 
@@ -268,43 +332,22 @@ class DataTransformer {
     // Aggregate hop data (average RTTs across same hops)
     const aggregatedPath = this.aggregateHopData(pathGroup);
 
+    // compute aggregated path-level protocol
+    const protocol =
+      this.getMostCommonProtocol(pathGroup) ??
+      (aggregatedPath[0]?.protocol ?? null);
+
+
     return {
       path: aggregatedPath,
       count: count,
       percent: percent,
       avg_rtt: Math.round(avgRtt * 100) / 100,
-      timeStamp: latestTimestamp
+      timeStamp: latestTimestamp,
+      protocol
     };
   }
 
-  /**
-   * Aggregate hop data across multiple paths
-   */
-  aggregateHopData(pathGroup) {
-    if (pathGroup.length === 0) return [];
-
-    const templatePath = pathGroup[0].path;
-
-    return templatePath.map((templateHop, hopIndex) => {
-      // Collect all RTT values for this hop across all paths
-      const allRtts = [];
-
-      pathGroup.forEach(path => {
-        if (path.path[hopIndex] && path.path[hopIndex].rtt_ms) {
-          allRtts.push(...path.path[hopIndex].rtt_ms);
-        }
-      });
-
-      // Use template hop data but with aggregated RTTs
-      return {
-        hop_number: templateHop.hop_number,
-        ip: templateHop.ip,
-        hostname: templateHop.hostname,
-        rtt_ms: allRtts.length > 0 ? allRtts : templateHop.rtt_ms,
-        is_timeout: templateHop.is_timeout
-      };
-    });
-  }
 
   /**
    * Validate and sanitize the transformed data

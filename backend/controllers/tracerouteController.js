@@ -213,7 +213,8 @@ class TracerouteController {
 
       // Destination filtering: accept ids or addresses
       if (destinations) {
-        const items = destinations.split(',').map(s => s.trim()).filter(Boolean);
+        const raw = destinations;
+        const items = Array.isArray(raw) ? raw : String(raw).split(','); // handle arrays or comma-separated
         const ids = items.filter(x => /^\d+$/.test(x));          // numeric ids
         const addrs = items.filter(x => !/^\d+$/.test(x));       // addresses
 
@@ -232,7 +233,7 @@ class TracerouteController {
         else if (ids.length > 1) query = query.in('method_id', ids);
       }
 
-      if (protocol) query = query.eq('traceroute_methods.description', protocol);
+      if (protocol) query = query.ilike('traceroute_methods.description', String(protocol));
       if (start_date) query = query.gte('timestamp', start_date);
       if (end_date) query = query.lte('timestamp', end_date);
 
@@ -298,17 +299,48 @@ class TracerouteController {
   // Get available protocols from traceroute methods
   async getProtocols(req, res) {
     try {
-      const { data, error } = await supabase
-        .from('traceroute_methods')
-        .select('description')
-        .order('description');
+      const {
+        destinations,   // comma-separated list of addresses or ids
+        start_date,
+        end_date
+      } = req.query;
 
-      if (error) {
-        throw error;
+      // Pull protocols only from trace_runs that match filters
+      const selectStr = `
+        id,
+        timestamp,
+        destinations:destination_id(address),
+        traceroute_methods(name,description)
+      `;
+
+      let query = supabase
+        .from('trace_runs')
+        .select(selectStr)
+        .order('timestamp', { ascending: false })
+        .limit(10000); // safety cap
+
+      if (destinations) {
+        const raw = destinations;
+        const items = Array.isArray(raw) ? raw : String(raw).split(',');
+        const ids = items.filter(x => /^\d+$/.test(x.trim())).map(x => x.trim());
+        const addrs = items.filter(x => !/^\d+$/.test(x.trim())).map(x => x.trim());
+        if (ids.length) query = query.in('destination_id', ids);
+        if (addrs.length) query = query.in('destinations.address', addrs);
       }
 
-      // Extract unique protocol names
-      const protocols = [...new Set(data.map(method => method.description))];
+      if (start_date) query = query.gte('timestamp', start_date);
+      if (end_date) query = query.lte('timestamp', end_date);
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Unique, normalized protocol names from joined traceroute_methods
+      const protocols = Array.from(new Set(
+        (data || [])
+          .map(r => r?.traceroute_methods?.description || r?.traceroute_methods?.name)
+          .filter(Boolean)
+          .map(s => String(s).trim())
+      )).sort();
 
       res.json({
         success: true,

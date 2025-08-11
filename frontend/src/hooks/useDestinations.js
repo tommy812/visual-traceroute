@@ -39,7 +39,7 @@ export const useDestinations = () => {
     setSelectedDestinationIds([]);
   }, []);
 
-// Derive selected objects from IDs
+  // Derive selected objects from IDs
   const selectedDestinations = useMemo(() => {
     if (!availableDestinations.length || !selectedDestinationIds.length) return [];
     const byId = new Map(availableDestinations.map(d => [d.id, d]));
@@ -65,10 +65,23 @@ export const useDestinations = () => {
 
   const clearAll = useCallback(() => setSelectedDestinationIds([]), []);
 
-  const getFilteredDestinations = useCallback((searchTerm) => {
+  const getFilteredDestinations = useCallback((searchTerm, filters = {}) => {
     const q = (searchTerm || '').toLowerCase();
-    if (!q) return availableDestinations;
-    return availableDestinations.filter(d => (d.address || '').toLowerCase().includes(q));
+    let filtered = availableDestinations;
+
+    // Filter by search term
+    if (q) {
+      filtered = filtered.filter(d => (d.address || '').toLowerCase().includes(q));
+    }
+
+    // Filter by protocol
+    if (filters.selectedProtocol) {
+      filtered = filtered.filter(d => d.protocol === filters.selectedProtocol);
+    }
+
+    // Add other filters here if needed
+
+    return filtered;
   }, [availableDestinations]);
 
   return {
