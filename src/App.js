@@ -85,7 +85,7 @@ class AppErrorBoundary extends React.Component {
 const App = React.memo(() => {
   // Use custom hooks for state management
   const filters = useFilters();
-  const { dateRange, handleQuickAccess, resetToCurrentDay } = useDateRange();
+  const { dateRange, handleQuickAccess, resetToCurrentDay, currentPeriod } = useDateRange();
   const {
     selectedDestinationIds,
     setSelectedDestinationIds,
@@ -129,53 +129,6 @@ const App = React.memo(() => {
     return hslToHex(hue, saturation, lightness);
   }, []);
 
-  // Determine current period for quick access buttons
-  const getCurrentPeriod = () => {
-    const now = new Date();
-    const currentDay = now.getDay();
-    const daysFromMonday = currentDay === 0 ? 6 : currentDay - 1;
-
-    // Check if it's current day (00:00 to now)
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    if (dateRange.start.getTime() === startOfToday.getTime() && dateRange.end.getTime() === now.getTime()) {
-      return 'current-day';
-    }
-
-    // Check if it's yesterday
-    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
-    const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
-    if (dateRange.start.getTime() === startOfYesterday.getTime() && dateRange.end.getTime() === endOfYesterday.getTime()) {
-      return 'last-day';
-    }
-
-    // Check if it's current week
-    const monday = new Date(now.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
-    const startOfMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0);
-    if (dateRange.start.getTime() === startOfMonday.getTime() && dateRange.end.getTime() === now.getTime()) {
-      return 'current-week';
-    }
-
-    // Check if it's last week
-    const lastWeekMonday = new Date(now.getTime() - (daysFromMonday + 7) * 24 * 60 * 60 * 1000);
-    const lastWeekSunday = new Date(lastWeekMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
-    const startOfLastWeekMonday = new Date(lastWeekMonday.getFullYear(), lastWeekMonday.getMonth(), lastWeekMonday.getDate(), 0, 0, 0, 0);
-    const endOfLastWeekSunday = new Date(lastWeekSunday.getFullYear(), lastWeekSunday.getMonth(), lastWeekSunday.getDate(), 23, 59, 59, 999);
-    if (dateRange.start.getTime() === startOfLastWeekMonday.getTime() && dateRange.end.getTime() === endOfLastWeekSunday.getTime()) {
-      return 'last-week';
-    }
-
-    // Check if it's last 30 days
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const startOfThirtyDaysAgo = new Date(thirtyDaysAgo.getFullYear(), thirtyDaysAgo.getMonth(), thirtyDaysAgo.getDate(), 0, 0, 0, 0);
-    if (dateRange.start.getTime() === startOfThirtyDaysAgo.getTime() && dateRange.end.getTime() === now.getTime()) {
-      return 'last-30-days';
-    }
-
-    return null;
-  };
-
-  const currentPeriod = getCurrentPeriod();
 
   // Reset all filters
   const handleResetFilters = () => {
