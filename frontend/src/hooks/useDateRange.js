@@ -71,6 +71,8 @@ export const useDateRange = () => {
     }
 
     setDateRange({ start: startDate, end: endDate });
+    setCurrentPeriod(period === 'custom' ? getPeriodFromRange(customDates.start ?? dateRange.start, customDates.end ?? dateRange.end) : period);
+
   }, [dateRange.start, dateRange.end]);
 
   const resetToCurrentDay = useCallback(() => {

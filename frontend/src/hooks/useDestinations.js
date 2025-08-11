@@ -39,12 +39,37 @@ export const useDestinations = () => {
     setSelectedDestinationIds([]);
   }, []);
 
-  // Derive selected objects from IDs
+// Derive selected objects from IDs
   const selectedDestinations = useMemo(() => {
     if (!availableDestinations.length || !selectedDestinationIds.length) return [];
     const byId = new Map(availableDestinations.map(d => [d.id, d]));
     return selectedDestinationIds.map(id => byId.get(id)).filter(Boolean);
   }, [availableDestinations, selectedDestinationIds]);
+
+  // Derived: addresses for API/Graph
+  const selectedDestinationAddresses = useMemo(
+    () => selectedDestinations.map(d => d.address),
+    [selectedDestinations]
+  );
+
+  // Helpers
+  const toggleDestination = useCallback((id) => {
+    setSelectedDestinationIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  }, []);
+
+  const selectAll = useCallback((ids) => {
+    setSelectedDestinationIds(Array.from(new Set(ids)));
+  }, []);
+
+  const clearAll = useCallback(() => setSelectedDestinationIds([]), []);
+
+  const getFilteredDestinations = useCallback((searchTerm) => {
+    const q = (searchTerm || '').toLowerCase();
+    if (!q) return availableDestinations;
+    return availableDestinations.filter(d => (d.address || '').toLowerCase().includes(q));
+  }, [availableDestinations]);
 
   return {
     // ids
@@ -52,12 +77,18 @@ export const useDestinations = () => {
     setSelectedDestinationIds,
     resetDestinations,
     // derived
-    selectedDestinations, // [{ id, address }]
+    selectedDestinations,              // [{ id, address }]
+    selectedDestinationAddresses,      // [address]
     // lists
-    availableDestinations, // [{ id, address }]
+    availableDestinations,             // [{ id, address }]
     availableProtocols,
     // loaders
     loadAvailableDestinations,
-    loadAvailableProtocols
+    loadAvailableProtocols,
+    // helpers
+    toggleDestination,
+    selectAll,
+    clearAll,
+    getFilteredDestinations
   };
 };

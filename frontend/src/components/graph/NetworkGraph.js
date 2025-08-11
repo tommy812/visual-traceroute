@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Graph from 'react-graph-vis';
-import dataTransformer from '../services/dataTransformer';
-import ipGeoService from '../services/ipGeoService';
+import dataTransformer from '../../services/dataTransformer';
+import ipGeoService from '../../services/ipGeoService';
 
 // Error Boundary for NetworkGraph
 class GraphErrorBoundary extends React.Component {

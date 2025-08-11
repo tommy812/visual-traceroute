@@ -1,4 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
+import React from 'react';
+
 
 export const useFilters = () => {
   const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
@@ -51,8 +53,15 @@ export const useFilters = () => {
     resetFilters
   }), [resetFilters]);
 
+    const togglePathType = React.useCallback((pathType) => {
+    setSelectedPathTypes(prev =>
+      prev.includes(pathType) ? prev.filter(p => p !== pathType) : [...prev, pathType]
+    );
+  }, []);
+
   return {
     ...filters,
-    ...setters
+    ...setters,
+    togglePathType
   };
 }; 

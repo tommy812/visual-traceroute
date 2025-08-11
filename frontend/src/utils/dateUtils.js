@@ -87,23 +87,23 @@ export const getLast30DaysRange = () => {
   return { start: startOfDay, end: now };
 };
 
+export function toLocalInputValue(date) {
+  if (!date) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
 
-/**
- * Get period from date range
- * Returns 'current-day', 'last-day', 'current-week', 'last-week', '
- * last-30-days' or null if no match
- * @param {Date} start - Start date of the range
- * @param {Date} end - End date of the range
- * @param {Date} now - Current date (default: now)
- * @param {number} tolMs - Tolerance in milliseconds for matching (default:
- *  60 seconds)
- */
+export function fromLocalInputValue(value) {
+  if (!value) return null;
+  const local = new Date(value);
+  return new Date(local.getTime() + local.getTimezoneOffset() * 60000);
+}
 
+// Tolerant period detection to avoid “double-click” selection
 export function getPeriodFromRange(start, end, now = new Date(), tolMs = 60_000) {
   if (!start || !end) return null;
 
   const isSameWithin = (a, b) => Math.abs(a - b) <= tolMs;
-
   const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
   const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 
@@ -111,39 +111,23 @@ export function getPeriodFromRange(start, end, now = new Date(), tolMs = 60_000)
   const endTs = end.getTime();
   const nowTs = now.getTime();
 
-  // Current Day
   const sodToday = startOfDay(now);
-  if (startTs === sodToday.getTime() && isSameWithin(endTs, nowTs)) {
-    return 'current-day';
-  }
+  if (startTs === sodToday.getTime() && isSameWithin(endTs, nowTs)) return 'current-day';
 
-  // Last Day (yesterday)
   const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (startTs === startOfDay(y).getTime() && endTs === endOfDay(y).getTime()) {
-    return 'last-day';
-  }
+  if (startTs === startOfDay(y).getTime() && endTs === endOfDay(y).getTime()) return 'last-day';
 
-  // Current Week (Mon 00:00 -> now)
   const day = now.getDay();
   const daysFromMonday = day === 0 ? 6 : day - 1;
   const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFromMonday);
-  const startOfMonday = startOfDay(monday);
-  if (startTs === startOfMonday.getTime() && isSameWithin(endTs, nowTs)) {
-    return 'current-week';
-  }
+  if (startTs === startOfDay(monday).getTime() && isSameWithin(endTs, nowTs)) return 'current-week';
 
-  // Last Week (Mon 00:00 -> Sun 23:59:59.999)
   const lastWeekMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (daysFromMonday + 7));
   const lastWeekSunday = new Date(lastWeekMonday.getFullYear(), lastWeekMonday.getMonth(), lastWeekMonday.getDate() + 6);
-  if (startTs === startOfDay(lastWeekMonday).getTime() && endTs === endOfDay(lastWeekSunday).getTime()) {
-    return 'last-week';
-  }
+  if (startTs === startOfDay(lastWeekMonday).getTime() && endTs === endOfDay(lastWeekSunday).getTime()) return 'last-week';
 
-  // Last 30 days (start exact, end ~ now)
   const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-  if (startTs === startOfDay(thirtyDaysAgo).getTime() && isSameWithin(endTs, nowTs)) {
-    return 'last-30-days';
-  }
+  if (startTs === startOfDay(thirtyDaysAgo).getTime() && isSameWithin(endTs, nowTs)) return 'last-30-days';
 
   return null;
 }
