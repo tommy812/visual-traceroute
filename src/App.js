@@ -1,264 +1,116 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React from "react";
 import NetworkGraph from "./components/NetworkGraph";
 import HopDrawer from "./components/HopDrawer";
 import "./styles.css";
 import "./network.css";
 
-// Import API service and data transformer
-import apiService from "./services/api";
-import dataTransformer from "./services/dataTransformer";
+// Import custom hooks
+import { useFilters } from "./hooks/useFilters";
+import { useDateRange } from "./hooks/useDateRange";
+import { useNetworkData } from "./hooks/useNetworkData";
+import { useDestinations } from "./hooks/useDestinations";
+import { useHopDrawer } from "./hooks/useHopDrawer";
 
-function App() {
-  // State management
-  const [pathData, setPathData] = useState({});
-  const [loading, setLoading] = useState(false); // Changed from true to false since we don't load by default
-  const [error, setError] = useState(null);
-  const [selectedDestinations, setSelectedDestinations] = useState([]);
-  const [availableDestinations, setAvailableDestinations] = useState([]);
-  const [availableProtocols, setAvailableProtocols] = useState([]);
+// Error Boundary for the entire application
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
 
-  // Set default date range to current day
-  const [dateRange, setDateRange] = useState(() => {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-    return { start: startOfDay, end: endOfDay };
-  });
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
 
-  const [selectedHop, setSelectedHop] = useState(null);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
+  componentDidCatch(error, errorInfo) {
+    console.error('App Error:', error, errorInfo);
+  }
 
-  // New filtering states
-  const [destinationSearchTerm, setDestinationSearchTerm] = useState('');
-  const [minRTT, setMinRTT] = useState('');
-  const [maxRTT, setMaxRTT] = useState('');
-  const [minUsagePercent, setMinUsagePercent] = useState('');
-  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
-  const [selectedProtocol, setSelectedProtocol] = useState(''); // Add protocol state
-
-  // Load data from API
-  const loadNetworkData = useCallback(async () => {
-    // Only load data if destinations are selected
-    if (selectedDestinations.length === 0) {
-      setPathData({});
-      setLoading(false);
-      return;
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          height: '100vh',
+          flexDirection: 'column',
+          padding: '20px',
+          backgroundColor: '#f8f9fa'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '20px' }}>🚨</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', marginBottom: '10px', color: '#dc3545' }}>
+            Application Error
+          </div>
+          <div style={{ fontSize: '16px', color: '#666', textAlign: 'center', marginBottom: '20px', maxWidth: '500px' }}>
+            Something went wrong with the application. Please try refreshing the page or contact support if the problem persists.
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: '12px 24px',
+              fontSize: '16px',
+              backgroundColor: '#007bff',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              marginBottom: '10px'
+            }}
+          >
+            🔄 Refresh Application
+          </button>
+          <details style={{ fontSize: '12px', color: '#666', maxWidth: '500px' }}>
+            <summary style={{ cursor: 'pointer', marginBottom: '10px' }}>Error Details</summary>
+            <pre style={{
+              backgroundColor: '#f8f9fa',
+              padding: '10px',
+              borderRadius: '4px',
+              overflow: 'auto',
+              fontSize: '11px',
+              border: '1px solid #dee2e6'
+            }}>
+              {this.state.error?.toString()}
+            </pre>
+          </details>
+        </div>
+      );
     }
 
-    try {
-      setLoading(true);
-      setError(null);
+    return this.props.children;
+  }
+}
 
-      // Build API filters
-      const filters = {};
-
-      if (selectedDestinations.length > 0) {
-        filters.destinations = selectedDestinations;
-      }
-
-      if (dateRange.start) {
-        filters.start_date = dateRange.start.toISOString();
-      }
-
-      if (dateRange.end) {
-        filters.end_date = dateRange.end.toISOString();
-      }
-
-      // Add protocol filter
-      if (selectedProtocol) {
-        filters.protocol = selectedProtocol;
-      }
-
-      // Fetch network data from API
-      const response = await apiService.getNetworkData(filters);
-
-      // Transform the data to frontend format
-      const transformedData = dataTransformer.transformNetworkData(response.data);
-      const validatedData = dataTransformer.validateTransformedData(transformedData);
-
-      setPathData(validatedData);
-
-    } catch (err) {
-      console.error('Error loading network data:', err);
-      setError(err.message || 'Failed to load network data');
-      setPathData({});
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedDestinations, dateRange, selectedProtocol]);
-
-  // Load available protocols on app start
-  const loadAvailableProtocols = useCallback(async () => {
-    try {
-      const response = await apiService.getProtocols();
-      const protocols = response.data || [];
-      setAvailableProtocols(protocols);
-
-      // Set default to first protocol if available and not already set
-      if (protocols.length > 0 && !selectedProtocol) {
-        setSelectedProtocol(protocols[0]);
-      }
-    } catch (err) {
-      console.error('Error loading protocols:', err);
-      // Fallback to UDP if API fails
-      setAvailableProtocols(['UDP', 'TCP']);
-      if (!selectedProtocol) {
-        setSelectedProtocol('UDP');
-      }
-    }
-  }, [selectedProtocol]);
-
-
-  // Load available destinations on app start
-  const loadAvailableDestinations = useCallback(async () => {
-    try {
-      const response = await apiService.getDestinations();
-      const destinations = response.data || [];
-      setAvailableDestinations(destinations);
-
-      // Don't auto-select any destinations - let user choose
-
-    } catch (err) {
-      console.error('Error loading destinations:', err);
-      // Don't set error state for this as it's not critical
-    }
-  }, []);
-
-  // Initial data load
-  useEffect(() => {
-    loadAvailableDestinations();
-    loadAvailableProtocols();
-  }, [loadAvailableDestinations, loadAvailableProtocols]);
-
-  // Load network data when dependencies change
-  useEffect(() => {
-    loadNetworkData();
-  }, [loadNetworkData]);
+// Optimized App component with React.memo
+const App = React.memo(() => {
+  // Use custom hooks for state management
+  const filters = useFilters();
+  const { dateRange, handleQuickAccess, resetToCurrentDay } = useDateRange();
+  const {
+    selectedDestinationIds,
+    setSelectedDestinationIds,
+    selectedDestinations,          // [{ id, address }]
+    availableDestinations,         // [{ id, address }]
+    availableProtocols,
+    resetDestinations,
+  } = useDestinations();
+  // Derive addresses to use with the data hook and the graph
+  const selectedDestinationAddresses = React.useMemo(
+    () => selectedDestinations.map(d => d.address),
+    [selectedDestinations]
+  );
+  const { pathData, loading, error } = useNetworkData(selectedDestinationAddresses, dateRange, filters.selectedProtocol);
+  const { selectedHop, isDrawerOpen, handleHopSelect, closeDrawer } = useHopDrawer();
 
   // Memoize filtered destinations to prevent unnecessary re-renders
-  const filteredDestinations = useMemo(() =>
-    availableDestinations.filter(dest =>
-      dest.toLowerCase().includes(destinationSearchTerm.toLowerCase())
-    ), [availableDestinations, destinationSearchTerm]);
-
-  // Memoize event handlers to prevent unnecessary re-renders of child components
-  const handleHopSelect = useCallback((hopData) => {
-    setSelectedHop(hopData);
-    setIsDrawerOpen(!!hopData); // Close drawer if hopData is null/falsy
-  }, []);
-
-  const handleDrawerClose = useCallback(() => {
-    setIsDrawerOpen(false);
-    setSelectedHop(null);
-  }, []);
-
-  const handleDestinationToggle = useCallback((destination) => {
-    setSelectedDestinations(prev =>
-      prev.includes(destination)
-        ? prev.filter(d => d !== destination)
-        : [...prev, destination]
-    );
-  }, []);
-
-  const handleSelectAllDestinations = useCallback(() => {
-    setSelectedDestinations(filteredDestinations);
-  }, [filteredDestinations]);
-
-  const handleClearAllDestinations = useCallback(() => {
-    setSelectedDestinations([]);
-  }, []);
-
-  const handlePathTypeToggle = useCallback((pathType) => {
-    setSelectedPathTypes(prev =>
-      prev.includes(pathType)
-        ? prev.filter(p => p !== pathType)
-        : [...prev, pathType]
-    );
-  }, []);
-
-  const handleResetFilters = useCallback(() => {
-
-    setDestinationSearchTerm('');
-    setMinRTT('');
-    setMaxRTT('');
-    setMinUsagePercent('');
-    setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
-    setShowPrimaryOnly(false);
-
-    // Reset protocol to first available protocol
-    if (availableProtocols.length > 0) {
-      setSelectedProtocol(availableProtocols[0]);
-    }
-
-    // Reset to current day
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
-    setDateRange({ start: startOfDay, end: endOfDay });
-  }, []);
-
-  const handleQuickAccess = useCallback((period) => {
-    const now = new Date();
-    let startDate, endDate;
-
-    switch (period) {
-      case 'current-day':
-        // From 00:00 today until current time
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-        endDate = now;
-        break;
-
-      case 'last-day':
-        // From 00:00 to 23:59 of yesterday
-        const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-        startDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
-        endDate = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
-        break;
-
-      case 'current-week':
-        // From Monday of current week until present day and time
-        const currentDayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
-        const daysFromMonday = currentDayOfWeek === 0 ? 6 : currentDayOfWeek - 1; // If Sunday, go back 6 days
-        const currentMonday = new Date(now.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
-        startDate = new Date(currentMonday.getFullYear(), currentMonday.getMonth(), currentMonday.getDate(), 0, 0, 0);
-        endDate = now;
-        break;
-
-      case 'last-week':
-        // From Monday to Sunday of last week (full week)
-        const currentDay = now.getDay();
-        const daysToLastMonday = currentDay === 0 ? 6 : currentDay - 1; // Days since current Monday
-        const daysToLastWeekMonday = daysToLastMonday + 7; // Go back one more week
-
-        const lastMonday = new Date(now.getTime() - daysToLastWeekMonday * 24 * 60 * 60 * 1000);
-        const lastSunday = new Date(lastMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
-
-        startDate = new Date(lastMonday.getFullYear(), lastMonday.getMonth(), lastMonday.getDate(), 0, 0, 0);
-        endDate = new Date(lastSunday.getFullYear(), lastSunday.getMonth(), lastSunday.getDate(), 23, 59, 59);
-        break;
-
-      case 'last-30-days':
-        // Last 30 days from current time
-        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        endDate = now;
-        break;
-
-      default:
-        // Fallback to current day
-        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-        endDate = now;
-    }
-
-    setDateRange({ start: startDate, end: endDate });
-  }, []);
-
-  const handleRefresh = useCallback(() => {
-    loadNetworkData();
-  }, [loadNetworkData]);
-
+  const filteredDestinations = React.useMemo(
+    () => availableDestinations.filter(d =>
+      d.address.toLowerCase().includes(filters.destinationSearchTerm.toLowerCase())
+    ),
+    [availableDestinations, filters.destinationSearchTerm]
+  );
   // Memoize destination color generator
-  const generateDestinationColor = useCallback((index) => {
+  const generateDestinationColor = React.useCallback((index) => {
     const hue = (index * 137.5) % 360;
     const saturation = 65;
     const lightness = 55;
@@ -276,6 +128,61 @@ function App() {
 
     return hslToHex(hue, saturation, lightness);
   }, []);
+
+  // Determine current period for quick access buttons
+  const getCurrentPeriod = () => {
+    const now = new Date();
+    const currentDay = now.getDay();
+    const daysFromMonday = currentDay === 0 ? 6 : currentDay - 1;
+
+    // Check if it's current day (00:00 to now)
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    if (dateRange.start.getTime() === startOfToday.getTime() && dateRange.end.getTime() === now.getTime()) {
+      return 'current-day';
+    }
+
+    // Check if it's yesterday
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const startOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
+    const endOfYesterday = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
+    if (dateRange.start.getTime() === startOfYesterday.getTime() && dateRange.end.getTime() === endOfYesterday.getTime()) {
+      return 'last-day';
+    }
+
+    // Check if it's current week
+    const monday = new Date(now.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
+    const startOfMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0);
+    if (dateRange.start.getTime() === startOfMonday.getTime() && dateRange.end.getTime() === now.getTime()) {
+      return 'current-week';
+    }
+
+    // Check if it's last week
+    const lastWeekMonday = new Date(now.getTime() - (daysFromMonday + 7) * 24 * 60 * 60 * 1000);
+    const lastWeekSunday = new Date(lastWeekMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
+    const startOfLastWeekMonday = new Date(lastWeekMonday.getFullYear(), lastWeekMonday.getMonth(), lastWeekMonday.getDate(), 0, 0, 0, 0);
+    const endOfLastWeekSunday = new Date(lastWeekSunday.getFullYear(), lastWeekSunday.getMonth(), lastWeekSunday.getDate(), 23, 59, 59, 999);
+    if (dateRange.start.getTime() === startOfLastWeekMonday.getTime() && dateRange.end.getTime() === endOfLastWeekSunday.getTime()) {
+      return 'last-week';
+    }
+
+    // Check if it's last 30 days
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const startOfThirtyDaysAgo = new Date(thirtyDaysAgo.getFullYear(), thirtyDaysAgo.getMonth(), thirtyDaysAgo.getDate(), 0, 0, 0, 0);
+    if (dateRange.start.getTime() === startOfThirtyDaysAgo.getTime() && dateRange.end.getTime() === now.getTime()) {
+      return 'last-30-days';
+    }
+
+    return null;
+  };
+
+  const currentPeriod = getCurrentPeriod();
+
+  // Reset all filters
+  const handleResetFilters = () => {
+    filters.resetFilters();
+    resetDestinations(); // was setSelectedDestinations([])
+    resetToCurrentDay();
+  };
 
   // If loading, show loading state
   if (loading) {
@@ -314,7 +221,7 @@ function App() {
           {error}
         </div>
         <button
-          onClick={handleRefresh}
+          onClick={() => window.location.reload()}
           style={{
             padding: '10px 20px',
             fontSize: '14px',
@@ -371,22 +278,6 @@ function App() {
             <span style={{ color: '#666' }}>
               {Object.keys(pathData).length} destinations
             </span>
-            <button
-              onClick={handleRefresh}
-              style={{
-                padding: '4px 8px',
-                fontSize: '11px',
-                backgroundColor: '#e3f2fd',
-                border: '1px solid #2196f3',
-                borderRadius: '3px',
-                cursor: 'pointer',
-                color: '#1976d2',
-                marginLeft: 'auto'
-              }}
-              disabled={loading}
-            >
-              🔄
-            </button>
           </div>
         </div>
 
@@ -396,7 +287,7 @@ function App() {
           borderBottom: "1px solid #dee2e6"
         }}>
           <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#333" }}>
-            🎯 Destinations ({selectedDestinations.length}/{availableDestinations.length})
+            🎯 Destinations ({selectedDestinationIds.length}/{availableDestinations.length})
           </h3>
 
           {/* Search Input */}
@@ -404,8 +295,8 @@ function App() {
             <input
               type="text"
               placeholder="Search destinations..."
-              value={destinationSearchTerm}
-              onChange={(e) => setDestinationSearchTerm(e.target.value)}
+              value={filters.destinationSearchTerm}
+              onChange={(e) => filters.setDestinationSearchTerm(e.target.value)}
               style={{
                 width: "100%",
                 padding: "6px 8px",
@@ -420,7 +311,7 @@ function App() {
           {/* Bulk Actions */}
           <div style={{ display: "flex", gap: "6px", marginBottom: "8px" }}>
             <button
-              onClick={handleSelectAllDestinations}
+              onClick={() => setSelectedDestinationIds(filteredDestinations.map(d => d.id))}
               style={{
                 flex: "1",
                 padding: "4px 8px",
@@ -435,7 +326,7 @@ function App() {
               Select All
             </button>
             <button
-              onClick={handleClearAllDestinations}
+              onClick={() => setSelectedDestinationIds([])}
               style={{
                 flex: "1",
                 padding: "4px 8px",
@@ -465,38 +356,49 @@ function App() {
                 {availableDestinations.length === 0 ? "Loading destinations..." : "No destinations found"}
               </div>
             ) : (
-              filteredDestinations.map((destination, index) => (
-                <label key={destination} style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                  cursor: "pointer",
-                  padding: "4px 6px",
-                  borderRadius: "3px",
-                  margin: "1px 0",
-                  backgroundColor: selectedDestinations.includes(destination) ? "#e3f2fd" : "transparent",
-                  fontSize: "12px",
-                  border: selectedDestinations.includes(destination) ? "1px solid #2196f3" : "1px solid transparent"
-                }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedDestinations.includes(destination)}
-                    onChange={() => handleDestinationToggle(destination)}
-                    style={{ margin: 0, transform: "scale(0.8)" }}
-                  />
-                  <div style={{
-                    width: "10px",
-                    height: "10px",
-                    backgroundColor: generateDestinationColor(selectedDestinations.indexOf(destination)),
-                    borderRadius: "2px",
-                    border: "1px solid #333",
-                    flexShrink: 0
-                  }}></div>
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {destination}
-                  </span>
-                </label>
-              ))
+              filteredDestinations.map((destination) => {
+                const isSelected = selectedDestinationIds.includes(destination.id);
+                return (
+                  <label key={destination.id} style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    cursor: "pointer",
+                    padding: "4px 6px",
+                    borderRadius: "3px",
+                    margin: "1px 0",
+                    backgroundColor: isSelected ? "#e3f2fd" : "transparent",
+                    fontSize: "12px",
+                    border: isSelected ? "1px solid #2196f3" : "1px solid transparent"
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {
+                        setSelectedDestinationIds(prev =>
+                          prev.includes(destination.id)
+                            ? prev.filter(id => id !== destination.id)
+                            : [...prev, destination.id]
+                        );
+                      }}
+                      style={{ margin: 0, transform: "scale(0.8)" }}
+                    />
+                    <div style={{
+                      width: "10px",
+                      height: "10px",
+                      backgroundColor: generateDestinationColor(
+                        selectedDestinationAddresses.indexOf(destination.address)
+                      ),
+                      borderRadius: "2px",
+                      border: "1px solid #333",
+                      flexShrink: 0
+                    }}></div>
+                    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {destination.address}
+                    </span>
+                  </label>
+                );
+              })
             )}
           </div>
         </div>
@@ -517,11 +419,11 @@ function App() {
             </label>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               {[
-                { key: 'current-day', label: 'Current Day', isDefault: true },
-                { key: 'last-day', label: 'Last Day' },
-                { key: 'current-week', label: 'Current Week' },
-                { key: 'last-week', label: 'Last Week' },
-                { key: 'last-30-days', label: 'Last 30 Days' }
+                { key: 'current-day', label: 'Current Day', isDefault: currentPeriod === 'current-day' },
+                { key: 'last-day', label: 'Last Day', isDefault: currentPeriod === 'last-day' },
+                { key: 'current-week', label: 'Current Week', isDefault: currentPeriod === 'current-week' },
+                { key: 'last-week', label: 'Last Week', isDefault: currentPeriod === 'last-week' },
+                { key: 'last-30-days', label: 'Last 30 Days', isDefault: currentPeriod === 'last-30-days' }
               ].map(({ key, label, isDefault }) => (
                 <button
                   key={key}
@@ -537,7 +439,7 @@ function App() {
                     fontWeight: isDefault ? "bold" : "500"
                   }}
                 >
-                  {label} {isDefault && '(Default)'}
+                  {label} {isDefault && '(Active)'}
                 </button>
               ))}
             </div>
@@ -553,8 +455,12 @@ function App() {
                 <label style={{ fontSize: "11px", color: "#666" }}>Start:</label>
                 <input
                   type="datetime-local"
-                  value={dateRange.start ? dateRange.start.toISOString().slice(0, 16) : ''}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, start: new Date(e.target.value) }))}
+                  value={dateRange.start ? new Date(dateRange.start.getTime() - dateRange.start.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+                  onChange={(e) => {
+                    const localDate = new Date(e.target.value);
+                    const utcDate = new Date(localDate.getTime() + localDate.getTimezoneOffset() * 60000);
+                    handleQuickAccess('custom', { start: utcDate });
+                  }}
                   style={{
                     width: "100%",
                     padding: "4px 6px",
@@ -571,8 +477,12 @@ function App() {
                 <label style={{ fontSize: "11px", color: "#666" }}>End:</label>
                 <input
                   type="datetime-local"
-                  value={dateRange.end ? dateRange.end.toISOString().slice(0, 16) : ''}
-                  onChange={(e) => setDateRange(prev => ({ ...prev, end: new Date(e.target.value) }))}
+                  value={dateRange.end ? new Date(dateRange.end.getTime() - dateRange.end.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}
+                  onChange={(e) => {
+                    const localDate = new Date(e.target.value);
+                    const utcDate = new Date(localDate.getTime() + localDate.getTimezoneOffset() * 60000);
+                    handleQuickAccess('custom', { end: utcDate });
+                  }}
                   style={{
                     width: "100%",
                     padding: "4px 6px",
@@ -604,8 +514,8 @@ function App() {
               Probe Protocol:
             </label>
             <select
-              value={selectedProtocol}
-              onChange={(e) => setSelectedProtocol(e.target.value)}
+              value={filters.selectedProtocol}
+              onChange={(e) => filters.setSelectedProtocol(e.target.value)}
               style={{
                 width: "100%",
                 padding: "4px 6px",
@@ -616,15 +526,12 @@ function App() {
                 boxSizing: "border-box"
               }}
             >
-              {availableProtocols.length === 0 ? (
-                <option value="">Loading protocols...</option>
-              ) : (
-                availableProtocols.map(protocol => (
-                  <option key={protocol} value={protocol}>
-                    {protocol}
-                  </option>
-                ))
-              )}
+              <option value="">All Protocols</option>
+              {availableProtocols.map(protocol => (
+                <option key={protocol} value={protocol}>
+                  {protocol}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -642,15 +549,21 @@ function App() {
                   cursor: "pointer",
                   padding: "3px 6px",
                   borderRadius: "3px",
-                  backgroundColor: selectedPathTypes.includes(pathType) ? "#e3f2fd" : "#fff",
+                  backgroundColor: filters.selectedPathTypes.includes(pathType) ? "#e3f2fd" : "#fff",
                   border: "1px solid #ccc",
                   fontSize: "11px",
                   flex: "1"
                 }}>
                   <input
                     type="checkbox"
-                    checked={selectedPathTypes.includes(pathType)}
-                    onChange={() => handlePathTypeToggle(pathType)}
+                    checked={filters.selectedPathTypes.includes(pathType)}
+                    onChange={() => {
+                      if (filters.selectedPathTypes.includes(pathType)) {
+                        filters.setSelectedPathTypes(prev => prev.filter(p => p !== pathType));
+                      } else {
+                        filters.setSelectedPathTypes(prev => [...prev, pathType]);
+                      }
+                    }}
                     style={{ margin: 0, transform: "scale(0.8)" }}
                   />
                   {pathType}
@@ -668,8 +581,8 @@ function App() {
               <input
                 type="number"
                 placeholder="Min"
-                value={minRTT}
-                onChange={(e) => setMinRTT(e.target.value)}
+                value={filters.minRTT}
+                onChange={(e) => filters.setMinRTT(e.target.value)}
                 style={{
                   flex: "1",
                   padding: "4px 6px",
@@ -682,8 +595,8 @@ function App() {
               <input
                 type="number"
                 placeholder="Max"
-                value={maxRTT}
-                onChange={(e) => setMaxRTT(e.target.value)}
+                value={filters.maxRTT}
+                onChange={(e) => filters.setMaxRTT(e.target.value)}
                 style={{
                   flex: "1",
                   padding: "4px 6px",
@@ -703,8 +616,8 @@ function App() {
             <input
               type="number"
               placeholder="e.g., 10"
-              value={minUsagePercent}
-              onChange={(e) => setMinUsagePercent(e.target.value)}
+              value={filters.minUsagePercent}
+              onChange={(e) => filters.setMinUsagePercent(e.target.value)}
               style={{
                 width: "100%",
                 padding: "4px 6px",
@@ -724,13 +637,12 @@ function App() {
             <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", marginBottom: "6px" }}>
               <input
                 type="checkbox"
-                checked={showPrimaryOnly}
-                onChange={(e) => setShowPrimaryOnly(e.target.checked)}
+                checked={filters.showPrimaryOnly}
+                onChange={(e) => filters.setShowPrimaryOnly(e.target.checked)}
                 style={{ margin: 0, transform: "scale(0.8)" }}
               />
               <span style={{ fontSize: "11px" }}>Show Primary Paths Only</span>
             </label>
-
           </div>
 
           {/* Reset Button */}
@@ -752,7 +664,7 @@ function App() {
         </div>
 
         {/* Current Selection Info */}
-        {selectedDestinations.length > 0 && (
+        {selectedDestinationIds.length > 0 && (
           <div style={{
             padding: "10px 15px",
             backgroundColor: "#e8f5e8",
@@ -760,21 +672,23 @@ function App() {
             fontSize: "11px"
           }}>
             <div style={{ fontWeight: "bold", marginBottom: "4px" }}>Active Filters:</div>
-            <div>{selectedDestinations.length} destination(s)</div>
-            {selectedDestinations.length <= 3 && (
-              <div style={{ color: "#666" }}>{selectedDestinations.join(", ")}</div>
-            )}
-            {showPrimaryOnly && <div style={{ color: "#666" }}>Primary paths only</div>}
-            {selectedProtocol !== 'ALL' && (
-              <div style={{ color: "#666" }}>Protocol: {selectedProtocol}</div>
-            )}
-            {(minRTT || maxRTT) && (
+            <div>{selectedDestinationIds.length} destination(s)</div>
+            {selectedDestinationIds.length <= 3 && (
               <div style={{ color: "#666" }}>
-                RTT: {minRTT || '0'}ms - {maxRTT || '∞'}ms
+                {selectedDestinationAddresses.join(", ")}
               </div>
             )}
-            {minUsagePercent && (
-              <div style={{ color: "#666" }}>Min usage: {minUsagePercent}%</div>
+            {filters.showPrimaryOnly && <div style={{ color: "#666" }}>Primary paths only</div>}
+            {filters.selectedProtocol && (
+              <div style={{ color: "#666" }}>Protocol: {filters.selectedProtocol}</div>
+            )}
+            {(filters.minRTT || filters.maxRTT) && (
+              <div style={{ color: "#666" }}>
+                RTT: {filters.minRTT || '0'}ms - {filters.maxRTT || '∞'}ms
+              </div>
+            )}
+            {filters.minUsagePercent && (
+              <div style={{ color: "#666" }}>Min usage: {filters.minUsagePercent}%</div>
             )}
           </div>
         )}
@@ -789,7 +703,7 @@ function App() {
         position: "relative"
       }}>
         {/* Graph Area */}
-        {selectedDestinations.length === 0 ? (
+        {selectedDestinationIds.length === 0 ? (
           <div style={{
             flex: "1",
             display: "flex",
@@ -797,7 +711,6 @@ function App() {
             justifyContent: "center",
             flexDirection: "column",
             backgroundColor: "#f8f9fa"
-
           }}>
             <div style={{ marginBottom: "15px", fontSize: "48px" }}>📋</div>
             <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#856404", fontSize: "18px" }}>
@@ -806,33 +719,20 @@ function App() {
             <div style={{ color: "#856404", fontSize: "14px", textAlign: "center", maxWidth: "400px" }}>
               Please select one or more destinations from the sidebar to view network traceroute data.
             </div>
-            {availableDestinations.length > 0 && (
-              <div style={{
-                color: "#666",
-                fontSize: "12px",
-                marginTop: "10px",
-                textAlign: "center",
-                maxWidth: "500px"
-              }}>
-                Available destinations: {availableDestinations.slice(0, 5).join(", ")}
-                {availableDestinations.length > 5 && ` and ${availableDestinations.length - 5} more...`}
-              </div>
-            )}
           </div>
         ) : (
           <div style={{ flex: "1", position: "relative" }}>
             <NetworkGraph
               pathData={pathData}
-              selectedDestinations={selectedDestinations}
+              selectedDestinations={selectedDestinationAddresses}
               dateRange={dateRange}
               onHopSelect={handleHopSelect}
-              showPrimaryOnly={showPrimaryOnly}
-              minRTT={minRTT}
-              maxRTT={maxRTT}
-              minUsagePercent={minUsagePercent}
-              selectedPathTypes={selectedPathTypes}
-              selectedProtocol={selectedProtocol}
-
+              showPrimaryOnly={filters.showPrimaryOnly}
+              minRTT={filters.minRTT}
+              maxRTT={filters.maxRTT}
+              minUsagePercent={filters.minUsagePercent}
+              selectedPathTypes={filters.selectedPathTypes}
+              selectedProtocol={filters.selectedProtocol}
             />
 
             {/* Instructions */}
@@ -855,12 +755,21 @@ function App() {
 
       {/* Hop Details Drawer */}
       <HopDrawer
-        hopData={selectedHop}
+        hopData={selectedHop?.allHops || []}
         isOpen={isDrawerOpen}
-        onClose={handleDrawerClose}
+        onClose={closeDrawer}
       />
     </div>
   );
-}
+});
 
-export default App;
+App.displayName = 'App';
+
+// Export the App wrapped with error boundary
+export default function AppWithErrorBoundary() {
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
+}

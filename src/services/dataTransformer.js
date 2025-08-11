@@ -11,10 +11,10 @@ class DataTransformer {
 
     // Group data by destination
     const groupedByDestination = this.groupByDestination(rawData);
-    
+
     // Transform each destination's data
     const transformedData = {};
-    
+
     Object.entries(groupedByDestination).forEach(([destination, traceRuns]) => {
       transformedData[destination] = this.transformDestinationData(destination, traceRuns);
     });
@@ -27,14 +27,19 @@ class DataTransformer {
    */
   groupByDestination(rawData) {
     return rawData.reduce((acc, traceRun) => {
-      const destination = traceRun.destination;
-      if (!acc[destination]) {
-        acc[destination] = [];
-      }
-      acc[destination].push(traceRun);
+      // New schema: destinations: { id, address }
+      const addr = traceRun?.destinations?.address
+        ?? traceRun?.destination          // fallback for old payloads
+        ?? '(unknown)';
+
+      const destKey = String(addr).trim().toLowerCase(); // normalize
+
+      if (!acc[destKey]) acc[destKey] = [];
+      acc[destKey].push(traceRun);
       return acc;
     }, {});
   }
+
 
   /**
    * Transform a destination's trace runs into the expected format
@@ -42,10 +47,10 @@ class DataTransformer {
   transformDestinationData(destination, traceRuns) {
     // Convert trace runs to path format
     const paths = traceRuns.map(traceRun => this.convertTraceRunToPath(traceRun));
-    
+
     // Group paths by similarity to identify primary vs alternatives
     const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(paths);
-    
+
     // Calculate total traces
     const totalTraces = traceRuns.length;
 
@@ -72,7 +77,7 @@ class DataTransformer {
 
     // Sort hops by hop number
     const sortedHops = [...traceRun.hops].sort((a, b) => a.hop_number - b.hop_number);
-    
+
     // Transform hops to frontend format, including null hops
     const path = sortedHops.map(hop => ({
       hop_number: hop.hop_number,
@@ -141,7 +146,7 @@ class DataTransformer {
           return `${parts[0]}.${parts[1]}.0.0/16`;
         }
       }
-      
+
       // Handle IPv6 - simplified prefix extraction
       if (ip.includes(':')) {
         const parts = ip.split(':');
@@ -149,7 +154,7 @@ class DataTransformer {
           return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}::/64`;
         }
       }
-      
+
       return ip; // Fallback to original IP
     } catch (error) {
       console.warn('Error extracting prefix from IP:', ip, error);
@@ -162,7 +167,7 @@ class DataTransformer {
    */
   groupByNetworkPrefix(ips, prefixLength = 24) {
     const prefixGroups = {};
-    
+
     ips.forEach(ip => {
       const prefix = this.getNetworkPrefix(ip, prefixLength);
       if (!prefixGroups[prefix]) {
@@ -200,19 +205,19 @@ class DataTransformer {
 
     // Group paths by their route signature (sequence of IPs, including timeouts)
     const pathGroups = this.groupPathsBySignature(paths);
-    
+
     // Find the most common path as primary
     const sortedGroups = Object.entries(pathGroups)
       .sort(([, a], [, b]) => b.length - a.length);
-    
+
     const primaryGroupPaths = sortedGroups[0] ? sortedGroups[0][1] : [paths[0]];
     const alternativeGroups = sortedGroups.slice(1);
 
     // Create primary path
     const primaryPath = this.aggregatePaths(primaryGroupPaths, paths.length);
-    
+
     // Create alternative paths
-    const alternatives = alternativeGroups.map(([signature, groupPaths]) => 
+    const alternatives = alternativeGroups.map(([signature, groupPaths]) =>
       this.aggregatePaths(groupPaths, paths.length)
     );
 
@@ -253,10 +258,10 @@ class DataTransformer {
 
     // Calculate average RTT across all paths in group
     const avgRtt = pathGroup.reduce((sum, path) => sum + path.avg_rtt, 0) / pathGroup.length;
-    
+
     // Use the most recent timestamp
     const timestamps = pathGroup.map(p => new Date(p.timeStamp)).filter(d => !isNaN(d));
-    const latestTimestamp = timestamps.length > 0 
+    const latestTimestamp = timestamps.length > 0
       ? new Date(Math.max(...timestamps)).toISOString()
       : new Date().toISOString();
 
@@ -277,13 +282,13 @@ class DataTransformer {
    */
   aggregateHopData(pathGroup) {
     if (pathGroup.length === 0) return [];
-    
+
     const templatePath = pathGroup[0].path;
-    
+
     return templatePath.map((templateHop, hopIndex) => {
       // Collect all RTT values for this hop across all paths
       const allRtts = [];
-      
+
       pathGroup.forEach(path => {
         if (path.path[hopIndex] && path.path[hopIndex].rtt_ms) {
           allRtts.push(...path.path[hopIndex].rtt_ms);
@@ -306,7 +311,7 @@ class DataTransformer {
    */
   validateTransformedData(data) {
     const validated = {};
-    
+
     Object.entries(data).forEach(([destination, destData]) => {
       if (destData && typeof destData === 'object') {
         validated[destination] = {

@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+the app needs to always implement the most simple, efficient and maintainable design choice, making sure every implementation follows design principles and best practises.
+Each response should take in consideration the whole project and project structure.
+When design is changing then unused code should be removed.
+Reponses should be clear and coincise.
+Existing graphical design should not be changed unlesse requested.
+instead of running to test, check the referenced terminals they are always running.

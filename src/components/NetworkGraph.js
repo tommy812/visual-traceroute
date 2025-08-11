@@ -1,9 +1,9 @@
-import React, { useMemo, useCallback, useState, useEffect, useRef } from "react";
-import Graph from "react-graph-vis";
-import dataTransformer from "../services/dataTransformer";
-import ipGeoService from "../services/ipGeoService";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import Graph from 'react-graph-vis';
+import dataTransformer from '../services/dataTransformer';
+import ipGeoService from '../services/ipGeoService';
 
-// Error boundary component for vis.js errors
+// Error Boundary for NetworkGraph
 class GraphErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -15,8 +15,7 @@ class GraphErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
-    console.error('Graph Error:', error);
-    console.error('Error Info:', errorInfo);
+    console.error('NetworkGraph Error:', error, errorInfo);
   }
 
   render() {
@@ -24,24 +23,27 @@ class GraphErrorBoundary extends React.Component {
       return (
         <div style={{
           display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
           justifyContent: 'center',
-          height: '400px',
-          border: '1px solid #ccc',
-          borderRadius: '8px',
-          backgroundColor: '#f8f9fa'
+          alignItems: 'center',
+          height: '100%',
+          flexDirection: 'column',
+          padding: '20px',
+          backgroundColor: '#f8f9fa',
+          border: '1px solid #dee2e6',
+          borderRadius: '4px'
         }}>
-          <h3 style={{ color: '#dc3545', margin: '0 0 10px 0' }}>
-            🚨 Graph Rendering Error
-          </h3>
-          <p style={{ color: '#666', textAlign: 'center', margin: '0 0 15px 0' }}>
-            There was an issue rendering the network graph.
-          </p>
+          <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
+          <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px', color: '#dc3545' }}>
+            Graph Rendering Error
+          </div>
+          <div style={{ fontSize: '14px', color: '#666', textAlign: 'center', marginBottom: '15px' }}>
+            There was an error rendering the network graph. Please try refreshing the page.
+          </div>
           <button
-            onClick={() => this.setState({ hasError: false, error: null })}
+            onClick={() => window.location.reload()}
             style={{
               padding: '8px 16px',
+              fontSize: '14px',
               backgroundColor: '#007bff',
               color: 'white',
               border: 'none',
@@ -49,21 +51,8 @@ class GraphErrorBoundary extends React.Component {
               cursor: 'pointer'
             }}
           >
-            Try Again
+            🔄 Refresh Page
           </button>
-          <details style={{ marginTop: '15px', fontSize: '12px', color: '#666' }}>
-            <summary>Error Details</summary>
-            <pre style={{ 
-              marginTop: '10px', 
-              padding: '10px', 
-              backgroundColor: '#f1f1f1',
-              borderRadius: '4px',
-              maxWidth: '400px',
-              overflow: 'auto'
-            }}>
-              {this.state.error?.toString()}
-            </pre>
-          </details>
         </div>
       );
     }
@@ -72,6 +61,7 @@ class GraphErrorBoundary extends React.Component {
   }
 }
 
+// Optimized NetworkGraph component with React.memo
 const NetworkGraph = React.memo(({ 
   pathData, 
   selectedDestinations, 
@@ -1328,6 +1318,7 @@ const NetworkGraph = React.memo(({
 
   // Function to trace ALL paths from a node/edge
   const traceAllPaths = useCallback((elementId, elementType) => {
+    // Use the pathMapping from the main useMemo, not the local one
     if (!pathMapping || pathMapping.size === 0) return [];
 
     const paths = pathMapping.get(elementId);
@@ -1375,16 +1366,19 @@ const NetworkGraph = React.memo(({
       
       colorIndex++;
 
-      allTracedPaths.push({
+      // Ensure all required properties are present
+      const pathObject = {
         id: pathId,
-        destination,
-        pathType,
+        destination: destination || "Unknown",
+        pathType: pathType || "UNKNOWN",
         isPrimary,
-        nodes: pathNodes,
-        edges: pathEdges,
+        nodes: pathNodes || [],
+        edges: pathEdges || [],
         highlightColor,
         lineStyle: isPrimary ? 'solid' : 'dashed'
-      });
+      };
+
+      allTracedPaths.push(pathObject);
     });
 
     return allTracedPaths;
@@ -1419,8 +1413,10 @@ const NetworkGraph = React.memo(({
   // Function to highlight paths based on element interaction
   const highlightPath = useCallback((elementId, elementType) => {
     const tracedPaths = traceAllPaths(elementId, elementType);
-    setHighlightedPaths(tracedPaths);
-    console.log('Highlighting paths:', tracedPaths);
+    // Ensure we only set valid paths
+    const validPaths = tracedPaths.filter(path => path && typeof path === 'object');
+    setHighlightedPaths(validPaths);
+    console.log('Highlighting paths:', validPaths);
   }, [traceAllPaths]);
 
   // Toggle fullscreen
@@ -1651,7 +1647,7 @@ const NetworkGraph = React.memo(({
     }
   }, [networkInstance, isFullscreen, dimensions]);
 
-  const [layoutOptimization, setLayoutOptimization] = useState('minimal-crossings');
+  const [layoutOptimization] = useState('minimal-crossings');
 
 const options = useMemo(() => {
   const baseOptions = {
@@ -1732,55 +1728,6 @@ const options = useMemo(() => {
       return baseOptions;
   }
 }, [layoutOptimization]);
-
-  // // Memoize options to prevent unnecessary re-renders
-  // const options = useMemo(() => ({
-  //   layout: {
-  //     hierarchical: {
-  //       enabled: true,
-  //       direction: "LR",
-  //       sortMethod: "hubsize",
-  //       shakeTowards: "root",
-  //       nodeSpacing: 120,
-  //       treeSpacing: 120,
-  //       levelSeparation: 150,
-  //       blockShifting: true,
-  //       edgeMinimization: true,
-  //       parentCentralization: true
-  //     }
-  //   },
-  //   physics: {
-  //     enabled: true
-  //   },
-  //   edges: {
-  //     smooth: { 
-  //       type: "dynamic",
-  //       roundness: 0.2
-  //     },
-  //     chosen: true
-  //   },
-  //   nodes: {
-  //     font: { 
-  //       face: 'Arial' // Keep face as default, individual nodes override size and stroke
-  //     },
-  //     margin: 10,
-  //     chosen: {
-  //       node: function(values, id, selected, hovering) {
-  //         values.borderColor = '#2196F3';
-  //         values.borderWidth = 2;
-  //       }
-  //     }
-  //   },
-  //   interaction: {
-  //     dragNodes: true,
-  //     zoomView: true,
-  //     dragView: true,
-  //     selectConnectedEdges: false
-  //   },
-  //   configure: {
-  //     enabled: false
-  //   }
-  // }), []);
 
   // Enhanced hop selection handler that fetches IP geolocation data
   const handleHopSelection = useCallback(async (nodeData) => {
@@ -1902,6 +1849,7 @@ const options = useMemo(() => {
         const edgeId = edges[0];
         highlightPath(edgeId, 'edge');
       } else {
+        // Clicked on background - clear selection
         onHopSelect(null);
         clearHighlight();
       }
@@ -1909,7 +1857,7 @@ const options = useMemo(() => {
     click: function(event) {
       event.preventDefault?.(); // Prevent default browser behavior
       if (event.nodes.length === 0 && event.edges.length === 0) {
-          onHopSelect(null);
+        onHopSelect(null);
         clearHighlight();
       }
     },
@@ -2082,7 +2030,7 @@ const options = useMemo(() => {
           </div>
           
           {highlightedPaths.map((path, index) => (
-            <div key={path.id} style={{
+            <div key={path?.id || index} style={{
               marginBottom: index < highlightedPaths.length - 1 ? "10px" : "0",
               paddingBottom: index < highlightedPaths.length - 1 ? "8px" : "0",
               borderBottom: index < highlightedPaths.length - 1 ? "1px solid #eee" : "none"
@@ -2095,7 +2043,7 @@ const options = useMemo(() => {
                 <div style={{
                   width: "12px",
                   height: "12px",
-                  backgroundColor: path.highlightColor,
+                  backgroundColor: path?.highlightColor || "#ccc",
                   marginRight: "8px",
                   borderRadius: "2px",
                   border: "1px solid #333"
@@ -2105,17 +2053,17 @@ const options = useMemo(() => {
                   fontWeight: "bold",
                   color: "#333"
                 }}>
-                  {path.destination}
+                  {path?.destination || "Unknown"}
                 </div>
               </div>
               
               <div style={{ fontSize: "11px", color: "#666", marginLeft: "20px" }}>
-                <strong>Type:</strong> {path.pathType} 
-                {path.isPrimary ? 
+                <strong>Type:</strong> {path?.pathType || "Unknown"} 
+                {path?.isPrimary ? 
                   <span style={{ color: "#28a745", marginLeft: "4px" }}>●</span> : 
                   <span style={{ color: "#6c757d", marginLeft: "4px" }}>⋯</span>
                 }<br/>
-                <strong>Nodes:</strong> {path.nodes.length} | <strong>Edges:</strong> {path.edges.length}
+                <strong>Nodes:</strong> {path?.nodes?.length || 0} | <strong>Edges:</strong> {path?.edges?.length || 0}
               </div>
             </div>
           ))}

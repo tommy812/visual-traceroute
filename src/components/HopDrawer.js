@@ -1,7 +1,11 @@
-import React, { useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import ipGeoService from '../services/ipGeoService';
 
+// Optimized HopDrawer component with React.memo
 const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
-  // Memoize the processed hop data to prevent unnecessary calculations
+  const [ipGeoData, setIpGeoData] = useState({});
+
+  // Process hop data with memoization
   const processedHopData = useMemo(() => {
     if (!hopData || !Array.isArray(hopData) || hopData.length === 0) {
       return null;
@@ -38,12 +42,37 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
     };
   }, [hopData]);
 
+  // Fetch IP geolocation data with optimized loading states
+  const fetchIPGeoData = useCallback(async (ip) => {
+    if (!ip || ip === 'Unknown' || ipGeoData[ip]) return;
+
+    try {
+      const geoData = await ipGeoService.getIPInfo(ip);
+      setIpGeoData(prev => ({ ...prev, [ip]: geoData }));
+    } catch (error) {
+      console.error(`Error fetching geo data for ${ip}:`, error);
+      setIpGeoData(prev => ({ ...prev, [ip]: { error: 'Failed to load location data' } }));
+    }
+  }, [ipGeoData]);
+
+  // Auto-fetch geo data for valid IPs
+  useEffect(() => {
+    if (isOpen && processedHopData && processedHopData.sharedIP && !processedHopData.isTimeoutHop) {
+      if (!ipGeoData[processedHopData.sharedIP] && !processedHopData.ipGeoData) {
+        fetchIPGeoData(processedHopData.sharedIP);
+      }
+    }
+  }, [isOpen, processedHopData, fetchIPGeoData, ipGeoData]);
+
   // Early return if no data
   if (!processedHopData) {
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, pathTypes, hopData: processedHops, ipGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, pathTypes, hopData: processedHops, ipGeoData: existingGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+
+  // Use existing geo data or fetch new one
+  const currentGeoData = existingGeoData || ipGeoData[sharedIP];
 
   return (
     <div 
@@ -161,7 +190,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
         )}
 
         {/* IP Geolocation Section */}
-        {ipGeoData && (
+        {currentGeoData && (
           <div style={{ marginBottom: '20px' }}>
             <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
               🌍 IP Geolocation & ISP Info
@@ -179,25 +208,25 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                   📍 Location
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  <strong>Country:</strong> {ipGeoData.country} ({ipGeoData.countryCode})
+                  <strong>Country:</strong> {currentGeoData.country} ({currentGeoData.countryCode})
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  <strong>Region:</strong> {ipGeoData.region}
+                  <strong>Region:</strong> {currentGeoData.region}
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  <strong>City:</strong> {ipGeoData.city}
+                  <strong>City:</strong> {currentGeoData.city}
                 </div>
-                {ipGeoData.zip && (
+                {currentGeoData.zip && (
                   <div style={{ marginBottom: '5px' }}>
-                    <strong>ZIP:</strong> {ipGeoData.zip}
+                    <strong>ZIP:</strong> {currentGeoData.zip}
                   </div>
                 )}
                 <div style={{ marginBottom: '5px' }}>
-                  <strong>Timezone:</strong> {ipGeoData.timezone}
+                  <strong>Timezone:</strong> {currentGeoData.timezone}
                 </div>
-                {ipGeoData.coordinates && (
+                {currentGeoData.coordinates && (
                   <div style={{ marginBottom: '5px' }}>
-                    <strong>Coordinates:</strong> {ipGeoData.coordinates.lat.toFixed(4)}, {ipGeoData.coordinates.lon.toFixed(4)}
+                    <strong>Coordinates:</strong> {currentGeoData.coordinates.lat.toFixed(4)}, {currentGeoData.coordinates.lon.toFixed(4)}
                   </div>
                 )}
               </div>
@@ -208,16 +237,16 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                   🏢 ISP & Network
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  <strong>ISP:</strong> {ipGeoData.isp}
+                  <strong>ISP:</strong> {currentGeoData.isp}
                 </div>
-                {ipGeoData.organization && (
+                {currentGeoData.organization && (
                   <div style={{ marginBottom: '5px' }}>
-                    <strong>Organization:</strong> {ipGeoData.organization}
+                    <strong>Organization:</strong> {currentGeoData.organization}
                   </div>
                 )}
-                {ipGeoData.asn && (
+                {currentGeoData.asn && (
                   <div style={{ marginBottom: '5px' }}>
-                    <strong>ASN:</strong> {ipGeoData.asn}
+                    <strong>ASN:</strong> {currentGeoData.asn}
                   </div>
                 )}
               </div>
@@ -229,37 +258,37 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                 </div>
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <span style={{
-                    background: ipGeoData.mobile ? '#27ae60' : '#7f8c8d',
+                    background: currentGeoData.mobile ? '#27ae60' : '#7f8c8d',
                     padding: '4px 8px',
                     borderRadius: '4px',
                     fontSize: '12px',
                     fontWeight: 'bold'
                   }}>
-                    📱 Mobile: {ipGeoData.mobile ? 'Yes' : 'No'}
+                    📱 Mobile: {currentGeoData.mobile ? 'Yes' : 'No'}
                   </span>
                   <span style={{
-                    background: ipGeoData.proxy ? '#e74c3c' : '#27ae60',
+                    background: currentGeoData.proxy ? '#e74c3c' : '#27ae60',
                     padding: '4px 8px',
                     borderRadius: '4px',
                     fontSize: '12px',
                     fontWeight: 'bold'
                   }}>
-                    🔒 Proxy: {ipGeoData.proxy ? 'Yes' : 'No'}
+                    🔒 Proxy: {currentGeoData.proxy ? 'Yes' : 'No'}
                   </span>
                   <span style={{
-                    background: ipGeoData.hosting ? '#9b59b6' : '#7f8c8d',
+                    background: currentGeoData.hosting ? '#9b59b6' : '#7f8c8d',
                     padding: '4px 8px',
                     borderRadius: '4px',
                     fontSize: '12px',
                     fontWeight: 'bold'
                   }}>
-                    🖥️ Hosting: {ipGeoData.hosting ? 'Yes' : 'No'}
+                    🖥️ Hosting: {currentGeoData.hosting ? 'Yes' : 'No'}
                   </span>
                 </div>
               </div>
 
               {/* Data freshness */}
-              {ipGeoData.fetchedAt && (
+              {currentGeoData.fetchedAt && (
                 <div style={{ 
                   fontSize: '12px', 
                   opacity: 0.8, 
@@ -267,7 +296,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                   borderTop: '1px solid rgba(255,255,255,0.2)',
                   paddingTop: '8px'
                 }}>
-                  📅 Data fetched: {new Date(ipGeoData.fetchedAt).toLocaleString()}
+                  📅 Data fetched: {new Date(currentGeoData.fetchedAt).toLocaleString()}
                 </div>
               )}
             </div>
@@ -342,7 +371,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
         )}
 
         {/* No geolocation data for valid IP (private/reserved) */}
-        {hasValidIP && !ipGeoData && !hasLoadingGeoData && !isTimeoutHop && (
+        {hasValidIP && !currentGeoData && !hasLoadingGeoData && !isTimeoutHop && (
           <div style={{ marginBottom: '20px' }}>
             <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
               🌍 IP Geolocation & ISP Info
