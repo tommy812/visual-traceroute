@@ -110,7 +110,9 @@ const App = React.memo(() => {
     [getFilteredDestinations, filters.destinationSearchTerm]
   );
 
-
+  const handleDrawerHighlight = React.useCallback((pathId) => {
+    window.dispatchEvent(new CustomEvent('graph:highlightPath', { detail: { pathId } }));
+  }, []);
 
   // Reset all filters
   const handleResetFilters = () => {
@@ -202,7 +204,7 @@ const App = React.memo(() => {
         showPrimaryOnly={filters.showPrimaryOnly}
         setShowPrimaryOnly={filters.setShowPrimaryOnly}
         onResetFilters={handleResetFilters}
-        apiHealthy={apiHealthy}           
+        apiHealthy={apiHealthy}
       />
 
       {/* Right Side - Graph */}
@@ -240,7 +242,12 @@ const App = React.memo(() => {
         )}
       </div>
 
-      <HopDrawer hopData={selectedHop?.allHops || []} isOpen={isDrawerOpen} onClose={closeDrawer} />
+      <HopDrawer
+        hopData={selectedHop?.allHops || []}
+        isOpen={isDrawerOpen}
+        onClose={closeDrawer}
+        onHighlightPath={handleDrawerHighlight} // added
+      />
     </div>
   );
 });

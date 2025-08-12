@@ -4,4 +4,7 @@ export { useNetworkData } from './useNetworkData';
 export { useDestinations } from './useDestinations';
 export { useHopDrawer } from './useHopDrawer';
 export { useGraphData } from './useGraphData';
-export { useGraphRendering } from './useGraphRendering'; 
+export { useGraphRendering } from './useGraphRendering';
+export { default as usePathHighlighting } from './usePathHighlighting';
+export { default as useGraphFullscreen } from './useGraphFullscreen'; 
+export { default as useGraphExport } from './useGraphExport';

@@ -2,8 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ipGeoService from '../../services/ipGeoService';
 
 // Optimized HopDrawer component with React.memo
-const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
+const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null }) => {
   const [ipGeoData, setIpGeoData] = useState({});
+  const [destFilter, setDestFilter] = useState('ALL');
+  const [sortBy, setSortBy] = useState('USAGE_DESC');
 
   // Process hop data with memoization
   const processedHopData = useMemo(() => {
@@ -13,11 +15,13 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
 
     // Get shared information from the first hop entry
     const sharedIP = hopData[0].ip;
-    
+
     // Check if all entries have the same hostname
     const hostnames = [...new Set(hopData.map(h => h.hostname).filter(Boolean))];
     const sharedHostname = hostnames.length === 1 ? hostnames[0] : null;
-    
+
+
+
     // Get unique destinations and path types
     const destinations = [...new Set(hopData.map(h => h.destination))];
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
@@ -28,6 +32,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
     const hasLoadingGeoData = hopData.some(h => h.hasLoadingGeoData === true);
     const isTimeoutHop = hopData.every(h => h.is_timeout || !h.ip);
     const hasValidIP = hopData.some(h => h.ip && !h.is_timeout);
+
+
 
     return {
       sharedIP,
@@ -43,6 +49,62 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
       protocols
     };
   }, [hopData]);
+
+  // filter/sort computed list
+  const visibleHops = useMemo(() => {
+    if (!processedHopData) return [];
+    let list = processedHopData.hopData;
+
+    // filter by destination
+    if (destFilter !== 'ALL') {
+      list = list.filter(h => h.destination === destFilter);
+    }
+
+    // sort
+    const cmp = (a, b) => {
+      switch (sortBy) {
+        case 'USAGE_DESC':
+          return (b.pathPercent ?? 0) - (a.pathPercent ?? 0);
+        case 'USAGE_ASC':
+          return (a.pathPercent ?? 0) - (b.pathPercent ?? 0);
+        case 'RTT_ASC':
+          return (a.pathAvgRtt ?? Infinity) - (b.pathAvgRtt ?? Infinity);
+        case 'RTT_DESC':
+          return (b.pathAvgRtt ?? -Infinity) - (a.pathAvgRtt ?? -Infinity);
+        case 'HOP_ASC':
+          return (a.hopNumber ?? 0) - (b.hopNumber ?? 0);
+        case 'HOP_DESC':
+          return (b.hopNumber ?? 0) - (a.hopNumber ?? 0);
+        case 'TYPE':
+          // PRIMARY first, then ALTERNATIVE by index
+          const order = (t) => (t === 'PRIMARY' ? 0 : 1);
+          const ot = order(a.pathType) - order(b.pathType);
+          if (ot !== 0) return ot;
+          return String(a.pathType).localeCompare(String(b.pathType));
+        case 'TIME_DESC':
+          return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
+        case 'TIME_ASC':
+          return new Date(a.timestamp || 0) - new Date(b.timestamp || 0);
+        default:
+          return 0;
+      }
+    };
+
+    return [...list].sort(cmp);
+  }, [processedHopData, destFilter, sortBy]);
+
+
+  const handleHighlightPath = useCallback((hop) => {
+    const pathId = `${hop.destination}-${hop.pathType}`;
+    if (typeof onHighlightPath === 'function') {
+      onHighlightPath(pathId);
+    } else {
+      // Fallback: broadcast event (NetworkGraph can listen to this)
+      window.dispatchEvent(new CustomEvent('graph:highlightPath', { detail: { pathId } }));
+    }
+  }, [onHighlightPath]);
+
+
 
   // Fetch IP geolocation data with optimized loading states
   const fetchIPGeoData = useCallback(async (ip) => {
@@ -77,7 +139,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
   const currentGeoData = existingGeoData || ipGeoData[sharedIP];
 
   return (
-    <div 
+    <div
       className={`hop-drawer ${isOpen ? 'open' : ''}`}
       style={{
         position: 'fixed',
@@ -112,7 +174,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
             Used in {destinations.length} destination(s), {processedHops.length} path(s)
           </p>
         </div>
-        <button 
+        <button
           onClick={onClose}
           style={{
             background: '#ff4757',
@@ -291,9 +353,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
 
               {/* Data freshness */}
               {currentGeoData.fetchedAt && (
-                <div style={{ 
-                  fontSize: '12px', 
-                  opacity: 0.8, 
+                <div style={{
+                  fontSize: '12px',
+                  opacity: 0.8,
                   marginTop: '8px',
                   borderTop: '1px solid rgba(255,255,255,0.2)',
                   paddingTop: '8px'
@@ -365,7 +427,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                 <span style={{ fontWeight: 'bold' }}>Timeout Hop - No IP Response</span>
               </div>
               <p style={{ margin: 0, opacity: 0.9 }}>
-                No geolocation data is available for this hop because it represents a network timeout. 
+                No geolocation data is available for this hop because it represents a network timeout.
                 The packets sent to this hop did not receive a response, so there's no IP address to analyze.
               </p>
             </div>
@@ -390,7 +452,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                 <span style={{ fontWeight: 'bold' }}>Geolocation Not Available</span>
               </div>
               <p style={{ margin: 0, opacity: 0.9 }}>
-                This IP address ({sharedIP}) appears to be a private, reserved, or local address. 
+                This IP address ({sharedIP}) appears to be a private, reserved, or local address.
                 Geolocation services typically only provide data for public IP addresses.
               </p>
             </div>
@@ -414,22 +476,64 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
-             <div>
+            <div>
               <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
             </div>
             <div>
               <strong>Total Occurrences:</strong> {processedHops.length} path(s)
             </div>
-           
+
           </div>
         </div>
+
+
 
         {/* Individual Path Details */}
         <div style={{ marginBottom: '20px' }}>
           <h4 style={{ margin: '0 0 15px 0', color: '#2c3e50', fontSize: '16px' }}>
-            🛤️ Path Details ({processedHops.length})
+            🛤️ Path Details ({visibleHops.length})
           </h4>
-          {processedHops.map((hop, index) => (
+          {/* Controls for filtering/sorting + Individual Path Details */}
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Destination filter */}
+            <label style={{ fontSize: '12px', color: '#555' }}>
+              Destination:&nbsp;
+              <select
+                value={destFilter}
+                onChange={(e) => setDestFilter(e.target.value)}
+                style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '12px' }}
+              >
+                <option value="ALL">All</option>
+                {destinations.map(d => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </label>
+
+            {/* Sorting */}
+            <label style={{ fontSize: '12px', color: '#555' }}>
+              Sort by:&nbsp;
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ padding: '6px 8px', borderRadius: '4px', border: '1px solid #ccc', fontSize: '12px' }}
+              >
+                <option value="USAGE_DESC">Usage % (high → low)</option>
+                <option value="USAGE_ASC">Usage % (low → high)</option>
+                <option value="RTT_ASC">Avg RTT (low → high)</option>
+                <option value="RTT_DESC">Avg RTT (high → low)</option>
+                <option value="HOP_ASC">Hop number (asc)</option>
+                <option value="HOP_DESC">Hop number (desc)</option>
+                <option value="TYPE">Path type (PRIMARY first)</option>
+                <option value="TIME_DESC">Timestamp (newest)</option>
+                <option value="TIME_ASC">Timestamp (oldest)</option>
+              </select>
+            </label>
+          </div>
+
+
+
+          {visibleHops.map((hop, index) => (
             <div key={index} style={{
               background: '#f8f9fa',
               padding: '15px',
@@ -437,8 +541,11 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
               border: '1px solid #e0e0e0',
               marginBottom: '15px'
             }}>
+
+
               {/* Path Header */}
-              <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <span style={{
                   background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
                   color: 'white',
@@ -453,6 +560,24 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                   → {hop.destination}
                 </span>
               </div>
+              <button
+                onClick={() => handleHighlightPath(hop)}
+                title="Highlight this path in the graph"
+                style={{
+                  background: '#3498db',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '6px 10px',
+                  fontSize: '12px',
+                  cursor: 'pointer'
+                }}
+              >
+                Highlight path
+              </button>
+            </div>
+            
+
 
               {/* Path Details */}
               <div style={{ fontSize: '14px', color: '#666', marginBottom: '12px' }}>
@@ -490,7 +615,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                     <strong>Measurements:</strong>
                     <div style={{ marginTop: '5px' }}>
                       {hop.rtt_ms.map((rtt, rttIndex) => (
-                        <span 
+                        <span
                           key={rttIndex}
                           style={{
                             display: 'inline-block',
@@ -511,7 +636,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                 )}
               </div>
 
-              
+
 
               {/* Hostname for this specific path if different */}
               {hop.hostname && hop.hostname !== sharedHostname && (
@@ -552,9 +677,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
               <strong>Traffic Distribution:</strong> Handles traffic across {processedHops.length} different path configuration(s)
             </div>
             <div>
-              <strong>Reliability Role:</strong> 
-              {processedHops.some(h => h.pathType === 'PRIMARY') ? 
-                ' Critical infrastructure (used in primary paths)' : 
+              <strong>Reliability Role:</strong>
+              {processedHops.some(h => h.pathType === 'PRIMARY') ?
+                ' Critical infrastructure (used in primary paths)' :
                 ' Alternative routing (backup paths only)'
               }
             </div>

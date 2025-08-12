@@ -2,7 +2,14 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Graph from 'react-graph-vis';
 import dataTransformer from '../../services/dataTransformer';
 import ipGeoService from '../../services/ipGeoService';
+import GraphControls from './GraphControls';
+
 import { useGraphData } from '../../hooks/useGraphData';
+import { usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../hooks';
+import { minimizeCrossings } from '../../utils/minimizeCrossingsUtils';
+import { generateDestinationColor } from '../../utils/colorUtils';
+import { curvedForIndex } from '../../utils/edges';
+
 
 // Error Boundary for NetworkGraph
 class GraphErrorBoundary extends React.Component {
@@ -62,6 +69,7 @@ class GraphErrorBoundary extends React.Component {
   }
 }
 
+
 // Optimized NetworkGraph component with React.memo
 const NetworkGraph = React.memo(({
   pathData,
@@ -77,12 +85,11 @@ const NetworkGraph = React.memo(({
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
-  const [highlightedPaths, setHighlightedPaths] = useState([]); // Changed to array for multiple paths
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [expandedPrefixes, setExpandedPrefixes] = useState(new Set()); // Track expanded prefix groups
   const [showPrefixAggregation, setShowPrefixAggregation] = useState(false); // Toggle prefix aggregation
   const graphContainerRef = useRef(null); // Ref for capturing the graph
+  const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
+  const networkRef = useRef(null);
   const { filteredData: filteredByHook } = useGraphData(pathData, {
     minRTT,
     maxRTT,
@@ -91,88 +98,9 @@ const NetworkGraph = React.memo(({
     showPrimaryOnly,
     selectedProtocol
   });
-  // Get viewport dimensions for fullscreen
-  useEffect(() => {
-    const updateDimensions = () => {
-      setDimensions({
-        width: window.innerWidth,
-        height: window.innerHeight
-      });
-    };
 
-    if (isFullscreen) {
-      updateDimensions();
-      window.addEventListener('resize', updateDimensions);
-      return () => window.removeEventListener('resize', updateDimensions);
-    }
-  }, [isFullscreen]);
 
-  // Define distinct colors for different highlighted paths
-  const pathHighlightColors = useMemo(() => [
-    "#FF6B35", // Vibrant Orange
-    "#004E89", // Deep Blue
-    "#009639", // Green
-    "#7209B7", // Purple
-    "#FF1654", // Red-Pink
-    "#FF8500", // Orange
-    "#0FA3B1", // Teal
-    "#B5179E", // Magenta
-    "#F72585", // Hot Pink
-    "#4361EE"  // Blue-Purple
-  ], []);
 
-  // Helper function to adjust color intensity for alternative paths
-  const adjustColorIntensity = useCallback((hexColor, intensity) => {
-    // Convert hex to RGB
-    const r = parseInt(hexColor.slice(1, 3), 16);
-    const g = parseInt(hexColor.slice(3, 5), 16);
-    const b = parseInt(hexColor.slice(5, 7), 16);
-
-    // Mix with white to create lighter version
-    const mixedR = Math.round(r * intensity + 255 * (1 - intensity));
-    const mixedG = Math.round(g * intensity + 255 * (1 - intensity));
-    const mixedB = Math.round(b * intensity + 255 * (1 - intensity));
-
-    // Convert back to hex
-    const toHex = (n) => n.toString(16).padStart(2, '0');
-    return `#${toHex(mixedR)}${toHex(mixedG)}${toHex(mixedB)}`;
-  }, []);
-
-  // Memoize color generator to prevent recreation
-  const generateDestinationColor = useCallback((index) => {
-    const hue = (index * 137.5) % 360;
-    const saturation = 65;
-    const lightness = 55;
-
-    const hslToHex = (h, s, l) => {
-      l /= 100;
-      const a = s * Math.min(l, 1 - l) / 100;
-      const f = n => {
-        const k = (n + h / 30) % 12;
-        const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-        return Math.round(255 * color).toString(16).padStart(2, '0');
-      };
-      return `#${f(0)}${f(8)}${f(4)}`;
-    };
-
-    return hslToHex(hue, saturation, lightness);
-  }, []);
-
-  // Function to create multi-path edge color (gradient or pattern)
-  const createMultiPathColor = useCallback((colors) => {
-    if (colors.length === 1) {
-      return { color: colors[0], opacity: 1.0 };
-    }
-
-    // For multiple colors, create a gradient effect by using the first color as primary
-    // and indicating multiple paths through styling
-    return {
-      color: colors[0],
-      opacity: 0.8,
-      highlight: colors[1] || colors[0], // Different color on highlight
-      hover: colors[colors.length - 1] || colors[0] // Another color on hover
-    };
-  }, []);
 
   // Toggle prefix expansion
   const handlePrefixToggle = useCallback((prefix) => {
@@ -213,59 +141,8 @@ const NetworkGraph = React.memo(({
     ];
     return keyParts.join('|');
   }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocol, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
-  // Enhanced highlighting logic - MOVED BEFORE GRAPH DATA CREATION
-  const getNodeHighlightStyle = useCallback((nodeId) => {
-    if (highlightedPaths.length === 0) return { isHighlighted: false, isDimmed: false, color: null };
 
-    // Check if this node is in any highlighted path
-    const relevantPaths = highlightedPaths.filter(p => p.nodes.includes(nodeId));
 
-    if (relevantPaths.length > 0) {
-      // Use the color of the first relevant path
-      return {
-        isHighlighted: true,
-        isDimmed: false,
-        color: relevantPaths[0].highlightColor
-      };
-    }
-
-    // Check if there are any highlighted paths (for dimming)
-    const hasHighlightedPaths = highlightedPaths.length > 0;
-    return {
-      isHighlighted: false,
-      isDimmed: hasHighlightedPaths,
-      color: null
-    };
-  }, [highlightedPaths]);
-
-  const getEdgeHighlightStyle = useCallback((fromId, toId) => {
-    if (highlightedPaths.length === 0) return { isHighlighted: false, isDimmed: false, colors: [], lineStyles: [] };
-
-    // Check if this edge is in any highlighted path
-    const relevantPaths = highlightedPaths.filter(p =>
-      p.edges.some(e => e.from === fromId && e.to === toId)
-    );
-
-    if (relevantPaths.length > 0) {
-      return {
-        isHighlighted: true,
-        isDimmed: false,
-        colors: relevantPaths.map(p => p.highlightColor),
-        lineStyles: relevantPaths.map(p => p.lineStyle),
-        paths: relevantPaths
-      };
-    }
-
-    // Check if there are any highlighted paths (for dimming)
-    const hasHighlightedPaths = highlightedPaths.length > 0;
-    return {
-      isHighlighted: false,
-      isDimmed: hasHighlightedPaths,
-      colors: [],
-      lineStyles: [],
-      paths: []
-    };
-  }, [highlightedPaths]);
 
   // Memoize the graph data creation to prevent unnecessary re-renders
   const { graph, nodeDetails, pathMapping } = useMemo(() => {
@@ -682,99 +559,10 @@ const NetworkGraph = React.memo(({
       }
 
       // Advanced crossing minimization algorithm
-      const minimizeCrossings = () => {
-        // Step 1: Group nodes by level
-        const levelGroups = new Map();
-        ipLevelMap.forEach((level, ip) => {
-          if (!levelGroups.has(level)) {
-            levelGroups.set(level, []);
-          }
-          levelGroups.get(level).push(ip);
-        });
 
-        // Step 2: Analyze actual path connections
-        const optimizedPositions = new Map();
-        const maxLevel = Math.max(...Array.from(ipLevelMap.values()));
-        const destinations = Object.keys(filteredData).sort();
 
-        // Position destinations first
-        destinations.forEach((dest, index) => {
-          optimizedPositions.set(`dest:${dest}`, index);
-        });
+      const optimizedPositions = minimizeCrossings({ ipLevelMap, ipToHopDetails, filteredData, expandedPrefixes });
 
-        // Work backwards through levels to minimize crossings
-        for (let level = maxLevel; level >= 1; level--) {
-          const currentLevelIPs = levelGroups.get(level) || [];
-          if (currentLevelIPs.length === 0) continue;
-
-          // Calculate optimal position for each IP based on its connections
-          const ipWithPositions = currentLevelIPs.map(ip => {
-            const hopDetails = ipToHopDetails.get(ip);
-            let totalScore = 0;
-            let connectionCount = 0;
-
-            if (level === maxLevel) {
-              // Connect to destinations - check which destinations this IP serves
-              destinations.forEach((dest, destIndex) => {
-                const connectsToDestination = hopDetails.some(detail => detail.destination === dest);
-                if (connectsToDestination) {
-                  totalScore += destIndex;
-                  connectionCount += 1;
-                }
-              });
-            } else {
-              // Connect to next level - find which next-level nodes this connects to
-              const nextLevelIPs = levelGroups.get(level + 1) || [];
-              nextLevelIPs.forEach(nextIP => {
-                // Check if there's a direct path connection
-                const connects = hopDetails.some(detail => {
-                  const destPaths = filteredData[detail.destination];
-
-                  // Check primary path
-                  if (destPaths.includePrimary !== false) {
-                    const pathHops = destPaths.primary_path.path;
-                    const currentIndex = pathHops.findIndex(hop => hop.ip === ip);
-                    const nextIndex = pathHops.findIndex(hop => hop.ip === nextIP);
-                    if (currentIndex >= 0 && nextIndex === currentIndex + 1) return true;
-                  }
-
-                  // Check alternative paths
-                  return destPaths.alternatives.some(altPath => {
-                    const pathHops = altPath.path;
-                    const currentIndex = pathHops.findIndex(hop => hop.ip === ip);
-                    const nextIndex = pathHops.findIndex(hop => hop.ip === nextIP);
-                    return currentIndex >= 0 && nextIndex === currentIndex + 1;
-                  });
-                });
-
-                if (connects) {
-                  const nextIPPosition = optimizedPositions.get(`ip:${nextIP}`) || 0;
-                  totalScore += nextIPPosition;
-                  connectionCount += 1;
-                }
-              });
-            }
-
-            return {
-              ip,
-              averagePosition: connectionCount > 0 ? totalScore / connectionCount : currentLevelIPs.length / 2,
-              connectionCount
-            };
-          });
-
-          // Sort by average connection position
-          ipWithPositions.sort((a, b) => a.averagePosition - b.averagePosition);
-
-          // Assign positions
-          ipWithPositions.forEach((item, index) => {
-            optimizedPositions.set(`ip:${item.ip}`, index);
-          });
-        }
-
-        return optimizedPositions;
-      };
-
-      const optimizedPositions = minimizeCrossings();
 
       // Create nodes for IP groups and timeout nodes
       Object.entries(ipGroups).forEach(([key, groupInfo]) => {
@@ -1028,17 +816,9 @@ const NetworkGraph = React.memo(({
       Object.keys(filteredData).forEach((destination, index) => {
         const nodeId = getOrCreateNodeId(`dest:${destination}`);
         const destData = filteredData[destination];
-        // const destColorIndex = selectedDestinations.indexOf(destination);
-        // const destColor = generateDestinationColor(destColorIndex);
-        // const totalPaths = showPrimaryOnly
-        // ? ((destData.includePrimary !== false && destData.primary_path) ? 1 : 0)
-        // : ((destData.includePrimary !== false && destData.primary_path ? 1 : 0) + (destData.alternatives?.length || 0));
 
         const optimizedPosition = optimizedPositions.get(`dest:${destination}`) || index;
-        // const spacing = 80;
-        // const yPosition = optimizedPosition * spacing - ((Object.keys(filteredData).length - 1) * spacing / 2);
 
-        // nodes.push({
         //   id: nodeId,
         //   label: destination,
         //   title:
@@ -1107,10 +887,8 @@ const NetworkGraph = React.memo(({
 
       // Create edges with multi-path color support
       Object.entries(filteredData).forEach(([destination, destData], destIndex) => {
-        // Use the index from selectedDestinations to match the list colors
         const destColorIndex = selectedDestinations.indexOf(destination);
         const destColor = generateDestinationColor(destColorIndex);
-        // const destNodeId = getOrCreateNodeId(`dest:${destination}`);
 
         // Primary path edges (only if included)
         if (destData.includePrimary !== false) {
@@ -1174,19 +952,7 @@ const NetworkGraph = React.memo(({
 
             lastNodeId = currentNodeId;
           });
-
-          // Connect last hop to destination
-          //   const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
-          //   if (!edgeUsage.has(finalEdgeKey)) {
-          //     edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
-          //   }
-          //   const finalUsage = edgeUsage.get(finalEdgeKey);
-          //   finalUsage.destinations.add(destination);
-          //   finalUsage.colors.push(destColor);
-          //   finalUsage.paths.add(pathId);
         }
-
-        // Alternative path edges (if not showPrimaryOnly)
         if (!showPrimaryOnly) {
           (destData.alternatives || []).forEach((altPath, altIndex) => {
 
@@ -1250,17 +1016,9 @@ const NetworkGraph = React.memo(({
               lastNodeId = currentNodeId;
             });
 
-            // Connect last hop to destination
-            //   const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
-            //   if (!edgeUsage.has(finalEdgeKey)) {
-            //     edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
-            //   }
-            //   const finalUsage = edgeUsage.get(finalEdgeKey);
-            //   finalUsage.destinations.add(destination);
-            //   finalUsage.colors.push(destColor);
-            //   finalUsage.paths.add(pathId);
+
           });
-        }
+        };
       });
 
       // Now create actual edges with proper multi-path coloring
@@ -1273,18 +1031,6 @@ const NetworkGraph = React.memo(({
         const uniqueColors = [...new Set(usage.colors)];
         const tooltip = `Used by: ${Array.from(usage.destinations).join(', ')}\nPaths: ${usage.paths.size}\nClick to highlight path`;
 
-        const curvedForIndex = (idx, total) => {
-          if (total <= 1) {
-            return { type: "continuous", roundness: 0.0, forceDirection: "horizontal" };
-          }
-          // Alternate sides: CW, CCW, CW, CCW...
-          const side = (idx % 2 === 0) ? "curvedCW" : "curvedCCW";
-          // Increase offset as we move away from center
-          const step = 0.18; // increase for more separation (0.12–0.25 is reasonable)
-          const offsetIndex = Math.floor(idx / 2) + 1;
-          const roundness = step * offsetIndex;
-          return { type: side, roundness, forceDirection: "horizontal" };
-        };
 
         if (uniqueColors.length <= 1) {
           // Single-color edge
@@ -1344,75 +1090,12 @@ const NetworkGraph = React.memo(({
       nodeDetails,
       pathMapping
     };
-  }, [graphKey, filteredByHook, generateDestinationColor, showPrimaryOnly, createMultiPathColor, selectedDestinations, dateRange, expandedPrefixes, showPrefixAggregation]);
+  }, [graphKey, filteredByHook, showPrimaryOnly, selectedDestinations, dateRange, expandedPrefixes, showPrefixAggregation]);
 
-  // Function to trace ALL paths from a node/edge
-  const traceAllPaths = useCallback((elementId, elementType) => {
-    // Use the pathMapping from the main useMemo, not the local one
-    if (!pathMapping || pathMapping.size === 0) return [];
+  const { highlightedGraph, highlightedPaths, highlightPath, clearHighlight } =
+    usePathHighlighting({ graph, pathMapping });
 
-    const paths = pathMapping.get(elementId);
-    if (!paths || paths.size === 0) return [];
 
-    // Get ALL paths that pass through this element
-    const allTracedPaths = [];
-    let colorIndex = 0;
-
-    paths.forEach(pathId => {
-      const [destination, pathType] = pathId.split('-', 2);
-      const isPrimary = pathType === 'PRIMARY';
-
-      // Find all nodes and edges that belong to this specific path
-      const pathNodes = [];
-      const pathEdges = [];
-
-      // Collect all elements that belong to this specific path
-      pathMapping.forEach((elementPaths, elementId) => {
-        if (elementPaths.has(pathId)) {
-          if (typeof elementId === 'string' && elementId.startsWith('edge_')) {
-            // Find the actual edge object
-            const edge = graph.edges.find(e => e.id === elementId);
-            if (edge) {
-              pathEdges.push({ from: edge.from, to: edge.to, id: edge.id });
-            }
-          } else {
-            pathNodes.push(elementId);
-          }
-        }
-      });
-
-      // Assign a base color to this path
-      const baseColor = pathHighlightColors[colorIndex % pathHighlightColors.length];
-
-      // Adjust color intensity based on path type
-      let highlightColor;
-      if (isPrimary) {
-        // Primary paths: use full intensity (stronger)
-        highlightColor = baseColor;
-      } else {
-        // Alternative paths: use lighter version (reduce opacity/saturation)
-        highlightColor = adjustColorIntensity(baseColor, 0.6); // 60% intensity
-      }
-
-      colorIndex++;
-
-      // Ensure all required properties are present
-      const pathObject = {
-        id: pathId,
-        destination: destination || "Unknown",
-        pathType: pathType || "UNKNOWN",
-        isPrimary,
-        nodes: pathNodes || [],
-        edges: pathEdges || [],
-        highlightColor,
-        lineStyle: isPrimary ? 'solid' : 'dashed'
-      };
-
-      allTracedPaths.push(pathObject);
-    });
-
-    return allTracedPaths;
-  }, [pathMapping, graph, pathHighlightColors, adjustColorIntensity]);
 
   // Memoize zoom control functions
   const handleZoomIn = useCallback(() => {
@@ -1435,236 +1118,18 @@ const NetworkGraph = React.memo(({
     }
   }, [networkInstance]);
 
-  // Clear path highlighting
-  const clearHighlight = useCallback(() => {
-    setHighlightedPaths([]); // Clear all highlighted paths
-  }, []);
-
-  // Function to highlight paths based on element interaction
-  const highlightPath = useCallback((elementId, elementType) => {
-    const tracedPaths = traceAllPaths(elementId, elementType);
-    // Ensure we only set valid paths
-    const validPaths = tracedPaths.filter(path => path && typeof path === 'object');
-    setHighlightedPaths(validPaths);
-    console.log('Highlighting paths:', validPaths);
-  }, [traceAllPaths]);
-
-  // Toggle fullscreen
-  const toggleFullscreen = useCallback(() => {
-    setIsFullscreen(prev => !prev);
-  }, []);
-
-  // Download graph as PNG
-  const downloadAsPNG = useCallback(() => {
-    if (!graphContainerRef.current || !networkInstance) return;
-
-    // Find the vis.js canvas element specifically
-    const visCanvas = graphContainerRef.current.querySelector('canvas');
-    if (!visCanvas) {
-      alert('Graph not ready for export. Please try again.');
-      return;
-    }
-
-    try {
-      // Get all node positions to calculate bounds
-      const nodeIds = graph.nodes.map(node => node.id);
-      const positions = networkInstance.getPositions(nodeIds);
-
-      if (Object.keys(positions).length === 0) {
-        alert('Graph layout not ready. Please wait a moment and try again.');
-        return;
-      }
-
-      // Calculate the bounding box of all nodes
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-      Object.values(positions).forEach(pos => {
-        minX = Math.min(minX, pos.x);
-        maxX = Math.max(maxX, pos.x);
-        minY = Math.min(minY, pos.y);
-        maxY = Math.max(maxY, pos.y);
-      });
-
-      // Add padding around the content (node sizes + margin)
-      const padding = 80;
-      minX -= padding;
-      maxX += padding;
-      minY -= padding;
-      maxY += padding;
-
-      // High quality scale factor
-      const scale = 3;
-
-      // Get the network's current view
-      const viewPosition = networkInstance.getViewPosition();
-      const canvasScale = networkInstance.getScale();
-
-      // Calculate the transform to center the content
-      const canvasWidth = visCanvas.width;
-      const canvasHeight = visCanvas.height;
-      const centerX = canvasWidth / 2;
-      const centerY = canvasHeight / 2;
-
-      // Transform coordinates from network space to canvas space
-      const canvasMinX = (minX - viewPosition.x) * canvasScale + centerX;
-      const canvasMinY = (minY - viewPosition.y) * canvasScale + centerY;
-      const canvasMaxX = (maxX - viewPosition.x) * canvasScale + centerX;
-      const canvasMaxY = (maxY - viewPosition.y) * canvasScale + centerY;
-
-      const canvasContentWidth = canvasMaxX - canvasMinX;
-      const canvasContentHeight = canvasMaxY - canvasMinY;
-
-      // Create high-resolution export canvas
-      const exportCanvas = document.createElement('canvas');
-      const ctx = exportCanvas.getContext('2d');
-
-      exportCanvas.width = canvasContentWidth * scale;
-      exportCanvas.height = canvasContentHeight * scale;
-
-      // Fill with white background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-
-      // Enable high-quality rendering
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      // Scale and draw the cropped portion
-      ctx.scale(scale, scale);
-      ctx.drawImage(
-        visCanvas,
-        canvasMinX, canvasMinY, canvasContentWidth, canvasContentHeight, // Source crop
-        0, 0, canvasContentWidth, canvasContentHeight // Destination
-      );
-
-      // Download the high-quality cropped image
-      const link = document.createElement('a');
-      link.download = `network-graph-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.png`;
-      link.href = exportCanvas.toDataURL('image/png');
-      link.click();
-
-    } catch (error) {
-      console.error('Error creating cropped PNG:', error);
-      alert('Error creating PNG. Please try again.');
-    }
-  }, [networkInstance, graph]);
-
-  // Download graph as SVG
-  const downloadAsSVG = useCallback(() => {
-    if (!graphContainerRef.current || !networkInstance) return;
-
-    // Find the vis.js canvas element specifically
-    const visCanvas = graphContainerRef.current.querySelector('canvas');
-    if (!visCanvas) {
-      alert('Graph not ready for export. Please try again.');
-      return;
-    }
-
-    try {
-      // Get all node positions to calculate bounds
-      const nodeIds = graph.nodes.map(node => node.id);
-      const positions = networkInstance.getPositions(nodeIds);
-
-      if (Object.keys(positions).length === 0) {
-        alert('Graph layout not ready. Please wait a moment and try again.');
-        return;
-      }
-
-      // Calculate the bounding box of all nodes
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-
-      Object.values(positions).forEach(pos => {
-        minX = Math.min(minX, pos.x);
-        maxX = Math.max(maxX, pos.x);
-        minY = Math.min(minY, pos.y);
-        maxY = Math.max(maxY, pos.y);
-      });
-
-      // Add padding around the content
-      const padding = 80;
-      minX -= padding;
-      maxX += padding;
-      minY -= padding;
-      maxY += padding;
-
-      // High quality scale factor
-      const scale = 3;
-
-      // Get the network's current view
-      const viewPosition = networkInstance.getViewPosition();
-      const canvasScale = networkInstance.getScale();
-
-      // Calculate canvas coordinates
-      const canvasWidth = visCanvas.width;
-      const canvasHeight = visCanvas.height;
-      const centerX = canvasWidth / 2;
-      const centerY = canvasHeight / 2;
-
-      const canvasMinX = (minX - viewPosition.x) * canvasScale + centerX;
-      const canvasMinY = (minY - viewPosition.y) * canvasScale + centerY;
-      const canvasMaxX = (maxX - viewPosition.x) * canvasScale + centerX;
-      const canvasMaxY = (maxY - viewPosition.y) * canvasScale + centerY;
-
-      const canvasContentWidth = canvasMaxX - canvasMinX;
-      const canvasContentHeight = canvasMaxY - canvasMinY;
-
-      // Create high-resolution cropped canvas
-      const cleanCanvas = document.createElement('canvas');
-      const ctx = cleanCanvas.getContext('2d');
-
-      cleanCanvas.width = canvasContentWidth * scale;
-      cleanCanvas.height = canvasContentHeight * scale;
-
-      // Fill with white background
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, cleanCanvas.width, cleanCanvas.height);
-
-      // Enable high-quality rendering
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-
-      // Scale and draw the cropped portion
-      ctx.scale(scale, scale);
-      ctx.drawImage(
-        visCanvas,
-        canvasMinX, canvasMinY, canvasContentWidth, canvasContentHeight,
-        0, 0, canvasContentWidth, canvasContentHeight
-      );
-
-      // Create SVG with exact cropped dimensions
-      const svgWidth = cleanCanvas.width;
-      const svgHeight = cleanCanvas.height;
-      const svgContent = `<?xml version="1.0" encoding="UTF-8"?>
-<svg width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}" 
-     xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-  <rect width="100%" height="100%" fill="#ffffff"/>
-  <image width="${svgWidth}" height="${svgHeight}" xlink:href="${cleanCanvas.toDataURL('image/png')}"/>
-</svg>`;
-
-      const blob = new Blob([svgContent], { type: 'image/svg+xml' });
-      const link = document.createElement('a');
-      link.download = `network-graph-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.svg`;
-      link.href = URL.createObjectURL(blob);
-      link.click();
-      URL.revokeObjectURL(link.href);
-
-    } catch (error) {
-      console.error('Error creating cropped SVG:', error);
-      alert('Error creating SVG. Please try again.');
-    }
-  }, [networkInstance, graph]);
-
   // Handle ESC key to exit fullscreen
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape' && isFullscreen) {
-        setIsFullscreen(false);
+        // setIsFullscreen(false); // ❌ not defined
+        toggleFullscreen();        // ✅ exit fullscreen
       }
     };
-
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen]);
+  }, [isFullscreen, toggleFullscreen]);
+
 
   // Force resize of network when going fullscreen
   useEffect(() => {
@@ -1901,126 +1366,14 @@ const NetworkGraph = React.memo(({
 
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
+    networkRef.current = network;
     setNetworkInstance(network);
   }, []);
 
-  // Container style based on fullscreen state
-  const containerStyle = useMemo(() => ({
-    border: isFullscreen ? "none" : "1px solid #ccc",
-    borderRadius: isFullscreen ? "0" : "8px",
-    position: isFullscreen ? "fixed" : "relative",
-    top: isFullscreen ? "0" : "auto",
-    left: isFullscreen ? "0" : "auto",
-    width: isFullscreen ? "100vw" : "100%",
-    height: isFullscreen ? "100vh" : "100%",
-    zIndex: isFullscreen ? 9999 : "auto",
-    backgroundColor: isFullscreen ? "#fff" : "transparent",
-    margin: isFullscreen ? "0" : "auto",
-    padding: isFullscreen ? "0" : "auto",
-    overflow: isFullscreen ? "hidden" : "visible"
-  }), [isFullscreen]);
 
-  // Apply highlighting to the graph without recreating it
-  const highlightedGraph = useMemo(() => {
-    if (!graph || !graph.nodes || !graph.edges) {
-      return graph;
-    }
 
-    // If no highlighting, return original graph
-    if (highlightedPaths.length === 0) {
-      console.log('No highlighting active - using original graph');
-      return graph;
-    }
+  const { downloadAsPNG, downloadAsSVG } = useGraphExport({ networkInstance, graphContainerRef, graph });
 
-    console.log('Applying highlighting to existing graph (no recreation)');
-
-    // Apply highlighting styles to nodes
-    const highlightedNodes = graph.nodes.map(node => {
-      const nodeHighlight = getNodeHighlightStyle(node.id);
-
-      if (nodeHighlight.isHighlighted) {
-        return {
-          ...node,
-          color: {
-            ...node.color,
-            background: nodeHighlight.color,
-            border: "#333"
-          },
-          font: {
-            ...node.font,
-            background: '#FFFFFF'
-          }
-        };
-      } else if (nodeHighlight.isDimmed) {
-        return {
-          ...node,
-          color: {
-            ...node.color,
-            background: "#E0E0E0",
-            border: "#CCCCCC"
-          },
-          opacity: 0.3
-        };
-      }
-
-      return node;
-    });
-
-    // Apply highlighting styles to edges
-    const highlightedEdges = graph.edges.map(edge => {
-      const edgeHighlight = getEdgeHighlightStyle(edge.from, edge.to);
-
-      if (edgeHighlight.isHighlighted) {
-        // Use the first highlighted path's color
-        const edgeColor = edgeHighlight.colors[0];
-
-        // Determine line style
-        const hasSolid = edgeHighlight.lineStyles.some(style => style === 'solid');
-        const hasDashed = edgeHighlight.lineStyles.some(style => style === 'dashed');
-
-        let edgeDashes, edgeWidth;
-        if (hasSolid && hasDashed) {
-          // Mixed: use dashed but thicker to indicate both
-          edgeDashes = [8, 4];
-          edgeWidth = 3;
-        } else if (hasDashed) {
-          // Only alternative paths
-          edgeDashes = [5, 5];
-          edgeWidth = 2;
-        } else {
-          // Only primary paths
-          edgeDashes = false;
-          edgeWidth = 3;
-        }
-
-        return {
-          ...edge,
-          color: {
-            ...edge.color,
-            color: edgeColor
-          },
-          width: edgeWidth,
-          dashes: edgeDashes
-        };
-      } else if (edgeHighlight.isDimmed) {
-        return {
-          ...edge,
-          color: {
-            ...edge.color,
-            color: "#E0E0E0",
-            opacity: 0.2
-          }
-        };
-      }
-
-      return edge;
-    });
-
-    return {
-      nodes: highlightedNodes,
-      edges: highlightedEdges
-    };
-  }, [graph, highlightedPaths, getNodeHighlightStyle, getEdgeHighlightStyle]);
 
   return (
     <div style={containerStyle} ref={graphContainerRef}>
@@ -2034,206 +1387,21 @@ const NetworkGraph = React.memo(({
         />
       </GraphErrorBoundary>
 
-      {/* Path Highlighting Controls */}
-      {highlightedPaths.length > 0 && (
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          right: "10px",
-          background: "rgba(255, 255, 255, 0.95)",
-          padding: "10px 15px",
-          borderRadius: "6px",
-          border: "2px solid #FFD700",
-          backdropFilter: "blur(5px)",
-          zIndex: 10,
-          maxWidth: "280px",
-          maxHeight: "300px",
-          overflowY: "auto"
-        }}>
-          <div style={{
-            fontSize: "14px",
-            fontWeight: "bold",
-            color: "#333",
-            marginBottom: "8px"
-          }}>
-            🔍 {highlightedPaths.length > 1 ? `${highlightedPaths.length} Paths` : 'Path'} Highlighted
-          </div>
-
-          {highlightedPaths.map((path, index) => (
-            <div key={path?.id || index} style={{
-              marginBottom: index < highlightedPaths.length - 1 ? "10px" : "0",
-              paddingBottom: index < highlightedPaths.length - 1 ? "8px" : "0",
-              borderBottom: index < highlightedPaths.length - 1 ? "1px solid #eee" : "none"
-            }}>
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                marginBottom: "4px"
-              }}>
-                <div style={{
-                  width: "12px",
-                  height: "12px",
-                  backgroundColor: path?.highlightColor || "#ccc",
-                  marginRight: "8px",
-                  borderRadius: "2px",
-                  border: "1px solid #333"
-                }}></div>
-                <div style={{
-                  fontSize: "12px",
-                  fontWeight: "bold",
-                  color: "#333"
-                }}>
-                  {path?.destination || "Unknown"}
-                </div>
-              </div>
-
-              <div style={{ fontSize: "11px", color: "#666", marginLeft: "20px" }}>
-                <strong>Type:</strong> {path?.pathType || "Unknown"}
-                {path?.isPrimary ?
-                  <span style={{ color: "#28a745", marginLeft: "4px" }}>●</span> :
-                  <span style={{ color: "#6c757d", marginLeft: "4px" }}>⋯</span>
-                }<br />
-                <strong>Nodes:</strong> {path?.nodes?.length || 0} | <strong>Edges:</strong> {path?.edges?.length || 0}
-              </div>
-            </div>
-          ))}
-
-          <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid #eee" }}>
-            <button
-              onClick={clearHighlight}
-              style={{
-                padding: "4px 8px",
-                backgroundColor: "#dc3545",
-                color: "white",
-                border: "none",
-                borderRadius: "3px",
-                cursor: "pointer",
-                fontSize: "11px",
-                width: "100%"
-              }}
-            >
-              Clear All Highlights
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Instructions */}
-      {!isFullscreen && (
-        <div style={{
-          position: "absolute",
-          bottom: "10px",
-          right: "10px",
-          background: "rgba(255, 255, 255, 0.9)",
-          padding: "8px 12px",
-          borderRadius: "4px",
-          fontSize: "12px",
-          border: "1px solid #ccc",
-          maxWidth: "220px"
-        }}>
-          💡 <strong>Click:</strong> Node/edge to highlight all paths<br />
-          🎨 <strong>Colors:</strong> Different paths shown in unique colors<br />
-          📍 <strong>Lines:</strong> Solid (primary) ⋯ Dashed (alternative)<br />
-          🎯 <strong>Empty space:</strong> Clear highlighting
-        </div>
-      )}
-
-      {/* Zoom Controls */}
-
-      <div className="zoom-controls">
-        <button
-          onClick={toggleFullscreen}
-          title={isFullscreen ? "Exit Fullscreen (ESC)" : "Enter Fullscreen"}
-          className="zoom-button fullscreen"
-        >
-          {isFullscreen ? "➡" : "⬅"}
-        </button>
-        <button
-          onClick={handleZoomIn}
-          title="Zoom In"
-          className="zoom-button zoom-in"
-        >
-          +
-        </button>
-
-        <button
-          onClick={handleZoomOut}
-          title="Zoom Out"
-          className="zoom-button zoom-out"
-        >
-          −
-        </button>
-
-
-
-        <button
-          onClick={handleResetZoom}
-          title="Fit to Screen"
-          className="zoom-button fit-screen"
-        >
-          ◎
-        </button>
-
-        {/* Download Controls */}
-        <div style={{ height: "8px" }}></div>
-
-        <button
-          onClick={downloadAsPNG}
-          title="Download as PNG"
-          className="zoom-button download-png"
-          disabled={!networkInstance}
-        >
-          PNG
-        </button>
-
-        <button
-          onClick={downloadAsSVG}
-          title="Download as SVG"
-          className="zoom-button download-svg"
-          disabled={!networkInstance}
-        >
-          SVG
-        </button>
-      </div>
-
-      {/* Prefix Aggregation Controls */}
-      <div style={{
-        position: "absolute",
-        bottom: isFullscreen ? "20px" : "10px",
-        left: isFullscreen ? "20px" : "10px",
-        background: "rgba(255, 255, 255, 0.95)",
-        padding: "10px 15px",
-        borderRadius: "6px",
-        border: "1px solid #ccc",
-        backdropFilter: "blur(5px)",
-        zIndex: 10,
-        fontSize: isFullscreen ? "14px" : "12px"
-      }}>
-        <label style={{ fontSize: isFullscreen ? '14px' : '12px', fontWeight: 'bold', marginBottom: '8px', display: 'block' }}>
-          🌐 Network View
-        </label>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: isFullscreen ? '12px' : '11px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={showPrefixAggregation}
-              onChange={handlePrefixAggregationToggle}
-              style={{ margin: 0, cursor: 'pointer' }}
-            />
-            Prefix & Timeout Aggregation
-          </label>
-          {showPrefixAggregation && expandedPrefixes.size > 0 && (
-            <div style={{ fontSize: isFullscreen ? '11px' : '10px', color: '#666', marginLeft: '24px' }}>
-              Expanded: {Array.from(expandedPrefixes).length} group(s)
-            </div>
-          )}
-          {showPrefixAggregation && (
-            <div style={{ fontSize: isFullscreen ? '10px' : '9px', color: '#888', marginLeft: '24px', fontStyle: 'italic' }}>
-              Click grouped nodes to expand/collapse
-            </div>
-          )}
-        </div>
-      </div>
+      <GraphControls
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={toggleFullscreen}
+        onZoomIn={handleZoomIn}
+        onZoomOut={handleZoomOut}
+        onFit={handleResetZoom}
+        onDownloadPNG={downloadAsPNG}
+        onDownloadSVG={downloadAsSVG}
+        canDownload={!!networkInstance}
+        showPrefixAggregation={showPrefixAggregation}
+        onTogglePrefixAggregation={handlePrefixAggregationToggle}
+        expandedCount={expandedPrefixes.size}
+        highlightedPaths={highlightedPaths}      // added
+        onClearHighlight={clearHighlight}        // added
+      />
     </div>
   );
 });
