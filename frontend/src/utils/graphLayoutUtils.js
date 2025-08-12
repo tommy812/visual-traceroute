@@ -1,0 +1,114 @@
+
+export function computeAlignedLevels(filteredData) {
+  // Build all considered paths as arrays of hop node keys (IPs or your node ids)
+  const paths = [];
+
+  Object.entries(filteredData || {}).forEach(([dest, destPaths]) => {
+    // primary
+    if (destPaths?.includePrimary !== false && destPaths?.primary_path?.path?.length) {
+      const hops = destPaths.primary_path.path
+        .filter(h => !!h && !h.is_timeout) // keep same criteria as your graph builder
+        .map(h => h.ip)
+        .filter(Boolean);
+      if (hops.length) paths.push(hops);
+    }
+    // alternatives
+    const alts = destPaths?.alternatives || destPaths?.alternative_paths || [];
+    alts.forEach(alt => {
+      if (!alt?.path?.length) return;
+      const hops = alt.path
+        .filter(h => !!h && !h.is_timeout)
+        .map(h => h.ip)
+        .filter(Boolean);
+      if (hops.length) paths.push(hops);
+    });
+  });
+
+  if (paths.length === 0) return new Map();
+
+  const maxDepth = Math.max(...paths.map(p => p.length)); // global max
+  // Map<nodeId, level>
+  const ipLevelMap = new Map();
+
+  paths.forEach(p => {
+    const L = p.length;
+    // shift so last hop sits at (maxDepth - 1)
+    const shift = maxDepth - L;
+    p.forEach((ip, i) => {
+      const normalizedLevel = i + shift;
+      const prev = ipLevelMap.get(ip);
+      if (prev === undefined || normalizedLevel > prev) {
+        ipLevelMap.set(ip, normalizedLevel);
+      }
+    });
+  });
+
+  return ipLevelMap; // 0..maxDepth-1, aligned on last hop
+}
+
+export function computeDestinationLanes(filteredData) {
+  const destinations = Object.keys(filteredData || {}).sort();
+  const laneByDest = new Map(destinations.map((d, i) => [d, i]));
+  return { laneByDest, laneCount: destinations.length };
+}
+
+// Weighted y-position per IP based on the lanes of destinations that traverse it.
+// Returns Map<ip, yIndex> (not pixels; scale later).
+export function computeLaneYByIp(filteredData) {
+  const { laneByDest } = computeDestinationLanes(filteredData);
+  const acc = new Map(); // ip -> { sum, count }
+  Object.entries(filteredData || {}).forEach(([dest, destPaths]) => {
+    const lane = laneByDest.get(dest) ?? 0;
+    const take = (hops) => hops.filter(h => h?.ip && !h.is_timeout).forEach(h => {
+      const ip = h.ip;
+      const a = acc.get(ip) || { sum: 0, count: 0 };
+      a.sum += lane; a.count += 1;
+      acc.set(ip, a);
+    });
+    if (destPaths?.includePrimary !== false && destPaths?.primary_path?.path) take(destPaths.primary_path.path);
+    (destPaths?.alternatives || []).forEach(alt => alt?.path && take(alt.path));
+  });
+  const res = new Map();
+  acc.forEach((v, ip) => res.set(ip, v.sum / Math.max(1, v.count)));
+  return res;
+}
+
+export function enforceMonotonicLevels(levelMap, data) {
+  const ips = hops =>
+    (Array.isArray(hops) ? hops : [])
+      .filter(h => h && !h.is_timeout && h.ip)
+      .map(h => h.ip);
+
+  let changed = true, guard = 0;
+  while (changed && guard < 6) {
+    changed = false; guard += 1;
+    Object.values(data || {}).forEach(dp => {
+      if (dp?.includePrimary !== false && dp?.primary_path?.path) {
+        const seq = ips(dp.primary_path.path);
+        for (let i = 0; i < seq.length - 1; i++) {
+          const a = seq[i], b = seq[i + 1];
+          const la = levelMap.get(a) ?? 0, lb = levelMap.get(b) ?? 0;
+          if (lb <= la) { levelMap.set(b, la + 1); changed = true; }
+        }
+      }
+      (Array.isArray(dp?.alternatives) ? dp.alternatives : []).forEach(alt => {
+        const seq = ips(alt?.path);
+        for (let i = 0; i < seq.length - 1; i++) {
+          const a = seq[i], b = seq[i + 1];
+          const la = levelMap.get(a) ?? 0, lb = levelMap.get(b) ?? 0;
+          if (lb <= la) { levelMap.set(b, la + 1); changed = true; }
+        }
+      });
+    });
+  }
+  return levelMap;
+}
+
+export function lastRealHopIndex(hops) {
+  if (!Array.isArray(hops)) return -1;
+  for (let i = hops.length - 1; i >= 0; i--) {
+    const h = hops[i];
+    if (h && !h.is_timeout && h.ip) return i;
+  }
+  return -1;
+}
