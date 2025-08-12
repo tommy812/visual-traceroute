@@ -21,14 +21,13 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
       destinations: destinationStrings,
       start_date: dateRange.start?.toISOString(),
       end_date: dateRange.end?.toISOString(),
-      protocol: selectedProtocol || undefined
     };
     
     // Only include defined parameters
     return Object.fromEntries(
       Object.entries(params).filter(([_, value]) => value !== undefined)
     );
-  }, [selectedDestinations, dateRange.start, dateRange.end, selectedProtocol]);
+  }, [selectedDestinations, dateRange.start, dateRange.end]);
 
   // Check if we need to fetch new data
   const shouldFetch = useMemo(() => {

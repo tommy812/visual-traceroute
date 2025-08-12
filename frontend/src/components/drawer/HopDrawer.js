@@ -21,6 +21,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
     // Get unique destinations and path types
     const destinations = [...new Set(hopData.map(h => h.destination))];
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
+    const protocols = [...new Set(hopData.map(h => (typeof h.protocol === 'string' ? h.protocol.trim() : h.protocol)).filter(Boolean))];
 
     // Check for IP geolocation data
     const ipGeoData = hopData.find(h => h.ipGeoInfo)?.ipGeoInfo || null;
@@ -38,7 +39,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
       ipGeoData,
       hasLoadingGeoData,
       isTimeoutHop,
-      hasValidIP
+      hasValidIP,
+      protocols
     };
   }, [hopData]);
 
@@ -69,7 +71,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, pathTypes, hopData: processedHops, ipGeoData: existingGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hopData: processedHops, ipGeoData: existingGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
 
   // Use existing geo data or fetch new one
   const currentGeoData = existingGeoData || ipGeoData[sharedIP];
@@ -412,16 +414,20 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
+             <div>
+              <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
+            </div>
             <div>
               <strong>Total Occurrences:</strong> {processedHops.length} path(s)
             </div>
+           
           </div>
         </div>
 
         {/* Individual Path Details */}
         <div style={{ marginBottom: '20px' }}>
           <h4 style={{ margin: '0 0 15px 0', color: '#2c3e50', fontSize: '16px' }}>
-            🛤️ Path Details
+            🛤️ Path Details ({processedHops.length})
           </h4>
           {processedHops.map((hop, index) => (
             <div key={index} style={{
@@ -451,13 +457,16 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
               {/* Path Details */}
               <div style={{ fontSize: '14px', color: '#666', marginBottom: '12px' }}>
                 <div style={{ marginBottom: '5px' }}>
-                  🔢 <strong>Hop #{hop.hopNumber}</strong> in this path
+                  🔢 <strong>Hop #{hop.hopNumber} / {pathTypes.length}</strong> in this path
                 </div>
                 <div style={{ marginBottom: '5px' }}>
                   📊 <strong>Usage:</strong> {hop.pathPercent}% ({hop.pathCount}/{hop.totalTraces} traces)
                 </div>
                 <div style={{ marginBottom: '5px' }}>
                   ⏱️ <strong>Path Avg RTT:</strong> {hop.pathAvgRtt}ms
+                </div>
+                <div style={{ marginBottom: '5px' }}>
+                  🧪 <strong>Protocol:</strong> {hop.protocol || 'Unknown'}
                 </div>
                 {hop.timestamp && (
                   <div style={{ marginBottom: '5px' }}>
@@ -501,6 +510,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose }) => {
                   </div>
                 )}
               </div>
+
+              
 
               {/* Hostname for this specific path if different */}
               {hop.hostname && hop.hostname !== sharedHostname && (

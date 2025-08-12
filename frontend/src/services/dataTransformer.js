@@ -97,13 +97,37 @@ class DataTransformer {
     // Group paths by similarity to identify primary vs alternatives
     const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(paths);
 
+     // Group by protocol
+    const byProtocol = paths.reduce((acc, p) => {
+      const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
+      (acc[key] ||= []).push(p);
+      return acc;
+    }, {});
+
+    // Build protocol_groups: for each protocol, compute its own primary/alternatives
+    const protocol_groups = {};
+    Object.entries(byProtocol).forEach(([proto, groupPaths]) => {
+      const { primaryPath: protoPrimary, alternatives: protoAlts } = this.identifyPrimaryAndAlternatives(groupPaths);
+
+      // Ensure protocol is set on aggregated outputs
+      if (protoPrimary && !protoPrimary.protocol) protoPrimary.protocol = proto;
+      (protoAlts || []).forEach(a => { if (a && !a.protocol) a.protocol = proto; });
+
+      protocol_groups[proto] = {
+        primary_path: protoPrimary,
+        alternatives: protoAlts,
+        total_traces: groupPaths.length
+      };
+    });
+
     // Calculate total traces
     const totalTraces = traceRuns.length;
 
     return {
       primary_path: primaryPath,
       alternatives: alternatives,
-      total_traces: totalTraces
+      total_traces: totalTraces,
+      protocol_groups
     };
   }
 
@@ -117,7 +141,6 @@ class DataTransformer {
    * Convert a single trace run to path format
    */
   convertTraceRunToPath(traceRun) {
-    // Derive protocol from the joined traceroute_methods
     const pathProtocol = this.normalizeProtocol(
       traceRun?.traceroute_methods?.description ??
       traceRun?.traceroute_methods?.name ??
@@ -125,31 +148,18 @@ class DataTransformer {
       traceRun?.protocol
     );
 
-    if (!traceRun.hops || !Array.isArray(traceRun.hops)) {
-      return {
-        path: [],
-        count: 1,
-        percent: 0,
-        avg_rtt: 0,
-        timeStamp: traceRun.timestamp || new Date().toISOString(),
-        protocol: pathProtocol
-      };
-    }
+    const hops = Array.isArray(traceRun.hops) ? [...traceRun.hops].sort((a, b) => a.hop_number - b.hop_number) : [];
 
-    // Sort hops by hop number
-    const sortedHops = [...traceRun.hops].sort((a, b) => a.hop_number - b.hop_number);
-
-    // Transform hops and stamp hop-level protocol (same as path)
-    const path = sortedHops.map(hop => ({
+    const path = hops.map(hop => ({
       hop_number: hop.hop_number,
       ip: hop.ip || null,
       hostname: hop.hostname,
       rtt_ms: this.convertRttToArray(hop.rtt1, hop.rtt2, hop.rtt3),
       is_timeout: !hop.ip || hop.ip === 'null' || hop.ip === null,
+      // keep hop-level protocol aligned with run protocol
       protocol: pathProtocol
     }));
 
-    // Calculate average RTT for the path
     const avgRtt = this.calculatePathAverageRtt(path);
 
     return {

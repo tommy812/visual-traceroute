@@ -408,6 +408,7 @@ const NetworkGraph = React.memo(({
                 totalTraces: destData.total_traces,
                 pathAvgRtt: destData.primary_path.avg_rtt,
                 timestamp: destData.primary_path.timeStamp,
+                protocol: destData.primary_path?.protocol || null,
                 is_timeout: true
               });
 
@@ -443,7 +444,8 @@ const NetworkGraph = React.memo(({
                 pathCount: destData.primary_path.count,
                 totalTraces: destData.total_traces,
                 pathAvgRtt: destData.primary_path.avg_rtt,
-                timestamp: destData.primary_path.timeStamp
+                timestamp: destData.primary_path.timeStamp,
+                protocol: destData.primary_path?.protocol || null
               });
             }
           });
@@ -474,7 +476,10 @@ const NetworkGraph = React.memo(({
                   pathCount: altPath.count,
                   totalTraces: destData.total_traces,
                   pathAvgRtt: altPath.avg_rtt,
-                  timestamp: altPath.timeStamp
+                  timestamp: altPath.timeStamp,
+                  protocol: altPath?.protocol || null,
+                  is_timeout: true
+
                 });
 
                 // Track the minimum level for this timeout
@@ -508,7 +513,8 @@ const NetworkGraph = React.memo(({
                   pathCount: altPath.count,
                   totalTraces: destData.total_traces,
                   pathAvgRtt: altPath.avg_rtt,
-                  timestamp: altPath.timeStamp
+                  timestamp: altPath.timeStamp,
+                  protocol: altPath?.protocol || null,
                 });
               }
             });
@@ -1022,47 +1028,48 @@ const NetworkGraph = React.memo(({
       Object.keys(filteredData).forEach((destination, index) => {
         const nodeId = getOrCreateNodeId(`dest:${destination}`);
         const destData = filteredData[destination];
-        const destColorIndex = selectedDestinations.indexOf(destination);
-        const destColor = generateDestinationColor(destColorIndex);
-        const totalPaths = showPrimaryOnly
-          ? ((destData.includePrimary !== false && destData.primary_path) ? 1 : 0)
-          : ((destData.includePrimary !== false && destData.primary_path ? 1 : 0) + (destData.alternatives?.length || 0));
+        // const destColorIndex = selectedDestinations.indexOf(destination);
+        // const destColor = generateDestinationColor(destColorIndex);
+        // const totalPaths = showPrimaryOnly
+        // ? ((destData.includePrimary !== false && destData.primary_path) ? 1 : 0)
+        // : ((destData.includePrimary !== false && destData.primary_path ? 1 : 0) + (destData.alternatives?.length || 0));
 
         const optimizedPosition = optimizedPositions.get(`dest:${destination}`) || index;
-        const spacing = 80;
-        const yPosition = optimizedPosition * spacing - ((Object.keys(filteredData).length - 1) * spacing / 2);
+        // const spacing = 80;
+        // const yPosition = optimizedPosition * spacing - ((Object.keys(filteredData).length - 1) * spacing / 2);
 
-        nodes.push({
-          id: nodeId,
-          label: destination,
-          title:
-            `Destination: ${destination}\n` +
-            `Total traces: ${destData.total_traces ?? 'N/A'}\n` +
-            `Total paths: ${totalPaths}\n` +
-            `Primary: ${destData.primary_path
-              ? `${destData.primary_path.percent}% (${destData.primary_path.count} traces, avg ${destData.primary_path.avg_rtt}ms)`
-              : 'N/A'}\n` +
-            `Alternatives: ${showPrimaryOnly ? 'Hidden' : (destData.alternatives?.length || 0)}`,
-          color: {
-            background: destColor,
-            border: "#333"
-          },
-          font: {
-            size: 14,
-            color: '#333333',
-            strokeWidth: 2,
-            strokeColor: '#ffffff'
-          },
-          shape: "box",
-          size: 30,
-          nodeType: "destination",
-          level: destinationLevel,
-          y: yPosition,
-          physics: false,
-          fixed: { x: false, y: true }
-        });
+        // nodes.push({
+        //   id: nodeId,
+        //   label: destination,
+        //   title:
+        //     `Destination: ${destination}\n` +
+        //     `Total traces: ${destData.total_traces ?? 'N/A'}\n` +
+        //     `Total paths: ${totalPaths}\n` +
+        //     `Primary: ${destData.primary_path
+        //       ? `${destData.primary_path.percent}% (${destData.primary_path.count} traces, avg ${destData.primary_path.avg_rtt}ms)`
+        //       : 'N/A'}\n` +
+        //     `Alternatives: ${showPrimaryOnly ? 'Hidden' : (destData.alternatives?.length || 0)}`,
+        //   color: {
+        //     background: destColor,
+        //     border: "#333"
+        //   },
+        //   font: {
+        //     size: 14,
+        //     color: '#333333',
+        //     strokeWidth: 2,
+        //     strokeColor: '#ffffff'
+        //   },
+        //   shape: "box",
+        //   size: 30,
+        //   nodeType: "destination",
+        //   level: destinationLevel,
+        //   y: yPosition,
+        //   physics: false,
+        //   fixed: { x: false, y: true }
+        // });
 
         // Map destination node to its paths
+
         const primaryPathId = `${destination}-PRIMARY`;
         if (!pathMapping.has(nodeId)) {
           pathMapping.set(nodeId, new Set());
@@ -1103,7 +1110,7 @@ const NetworkGraph = React.memo(({
         // Use the index from selectedDestinations to match the list colors
         const destColorIndex = selectedDestinations.indexOf(destination);
         const destColor = generateDestinationColor(destColorIndex);
-        const destNodeId = getOrCreateNodeId(`dest:${destination}`);
+        // const destNodeId = getOrCreateNodeId(`dest:${destination}`);
 
         // Primary path edges (only if included)
         if (destData.includePrimary !== false) {
@@ -1169,14 +1176,14 @@ const NetworkGraph = React.memo(({
           });
 
           // Connect last hop to destination
-          const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
-          if (!edgeUsage.has(finalEdgeKey)) {
-            edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
-          }
-          const finalUsage = edgeUsage.get(finalEdgeKey);
-          finalUsage.destinations.add(destination);
-          finalUsage.colors.push(destColor);
-          finalUsage.paths.add(pathId);
+          //   const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
+          //   if (!edgeUsage.has(finalEdgeKey)) {
+          //     edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
+          //   }
+          //   const finalUsage = edgeUsage.get(finalEdgeKey);
+          //   finalUsage.destinations.add(destination);
+          //   finalUsage.colors.push(destColor);
+          //   finalUsage.paths.add(pathId);
         }
 
         // Alternative path edges (if not showPrimaryOnly)
@@ -1244,14 +1251,14 @@ const NetworkGraph = React.memo(({
             });
 
             // Connect last hop to destination
-            const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
-            if (!edgeUsage.has(finalEdgeKey)) {
-              edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
-            }
-            const finalUsage = edgeUsage.get(finalEdgeKey);
-            finalUsage.destinations.add(destination);
-            finalUsage.colors.push(destColor);
-            finalUsage.paths.add(pathId);
+            //   const finalEdgeKey = createEdgeKey(lastNodeId, destNodeId);
+            //   if (!edgeUsage.has(finalEdgeKey)) {
+            //     edgeUsage.set(finalEdgeKey, { destinations: new Set(), colors: [], paths: new Set() });
+            //   }
+            //   const finalUsage = edgeUsage.get(finalEdgeKey);
+            //   finalUsage.destinations.add(destination);
+            //   finalUsage.colors.push(destColor);
+            //   finalUsage.paths.add(pathId);
           });
         }
       });
@@ -1264,41 +1271,67 @@ const NetworkGraph = React.memo(({
         const toId = parseInt(toStr);
 
         const uniqueColors = [...new Set(usage.colors)];
-
-        // Use normal edge styling (highlighting will be applied separately)
-        const edgeColorObj = createMultiPathColor(uniqueColors);
-        const edgeColor = edgeColorObj.color;
-        const edgeDashes = uniqueColors.length > 1 ? [5, 5] : false;
-        const edgeWidth = 2;
-
-        // Create tooltip
         const tooltip = `Used by: ${Array.from(usage.destinations).join(', ')}\nPaths: ${usage.paths.size}\nClick to highlight path`;
 
-        const edge = {
-          id: `edge_${edgeId++}`,
-          from: fromId,
-          to: toId,
-          color: {
-            color: edgeColor,
-            opacity: 1.0
-          },
-          width: edgeWidth,
-          arrows: "to",
-          smooth: { type: "continuous" },
-          dashes: edgeDashes,
-          title: tooltip,
-          paths: Array.from(usage.paths)
+        const curvedForIndex = (idx, total) => {
+          if (total <= 1) {
+            return { type: "continuous", roundness: 0.0, forceDirection: "horizontal" };
+          }
+          // Alternate sides: CW, CCW, CW, CCW...
+          const side = (idx % 2 === 0) ? "curvedCW" : "curvedCCW";
+          // Increase offset as we move away from center
+          const step = 0.18; // increase for more separation (0.12–0.25 is reasonable)
+          const offsetIndex = Math.floor(idx / 2) + 1;
+          const roundness = step * offsetIndex;
+          return { type: side, roundness, forceDirection: "horizontal" };
         };
 
-        edges.push(edge);
+        if (uniqueColors.length <= 1) {
+          // Single-color edge
+          const edge = {
+            id: `edge_${edgeId++}`,
+            from: fromId,
+            to: toId,
+            color: { color: uniqueColors[0] || '#999', opacity: 1.0 },
+            width: 2,
+            arrows: "to",
+            smooth: { type: "continuous", roundness: 0.0, forceDirection: "horizontal" },
+            dashes: false,
+            arrowStrikethrough: false, // keeps arrow visible on curved edges
+            title: tooltip,
+            paths: Array.from(usage.paths)
+          };
+          edges.push(edge);
+          usage.paths.forEach(pathId => {
+            const eid = edge.id;
+            if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
+            pathMapping.get(eid).add(pathId);
+          });
+        } else {
+          // Multi-color: one parallel curved edge per color
+          uniqueColors.forEach((col, idx) => {
+            const eid = `edge_${edgeId++}`;
+            const edge = {
+              id: eid,
+              from: fromId,
+              to: toId,
+              color: { color: col, opacity: 1.0 },
+              width: 2,
+              arrows: "to",
+              smooth: curvedForIndex(idx, uniqueColors.length),
+              dashes: false,
+              arrowStrikethrough: false,
+              title: tooltip,
+              paths: Array.from(usage.paths)
+            };
+            edges.push(edge);
 
-        // Map edge to paths
-        usage.paths.forEach(pathId => {
-          if (!pathMapping.has(`edge_${edgeId - 1}`)) {
-            pathMapping.set(`edge_${edgeId - 1}`, new Set());
-          }
-          pathMapping.get(`edge_${edgeId - 1}`).add(pathId);
-        });
+            usage.paths.forEach(pathId => {
+              if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
+              pathMapping.get(eid).add(pathId);
+            });
+          });
+        }
       });
 
       console.log('Graph creation completed. Edges:', edges.length);
