@@ -322,7 +322,8 @@ class DataTransformer {
         percent: 0,
         avg_rtt: 0,
         timeStamp: new Date().toISOString(),
-        protocol: null
+        protocol: null,
+        timestamps: []
       };
     }
 
@@ -334,9 +335,12 @@ class DataTransformer {
     const avgRtt = pathGroup.reduce((sum, path) => sum + path.avg_rtt, 0) / pathGroup.length;
 
     // Use the most recent timestamp
-    const timestamps = pathGroup.map(p => new Date(p.timeStamp)).filter(d => !isNaN(d));
+    const timestamps = pathGroup
+      .map(p => p.timeStamp)
+      .filter(t => !!t && !Number.isNaN(new Date(t)))
+      .sort((a, b) => new Date(a) - new Date(b));
     const latestTimestamp = timestamps.length > 0
-      ? new Date(Math.max(...timestamps)).toISOString()
+      ? new Date(Math.max(...timestamps.map(t => new Date(t).valueOf()))).toISOString()
       : new Date().toISOString();
 
     // Aggregate hop data (average RTTs across same hops)
@@ -354,7 +358,8 @@ class DataTransformer {
       percent: percent,
       avg_rtt: Math.round(avgRtt * 100) / 100,
       timeStamp: latestTimestamp,
-      protocol
+      protocol,
+      timestamps
     };
   }
 

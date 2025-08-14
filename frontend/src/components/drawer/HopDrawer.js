@@ -1,11 +1,20 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ipGeoService from '../../services/ipGeoService';
+import peeringDbService from '../../services/peeringDbService';
 
 // Optimized HopDrawer component with React.memo
 const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null }) => {
   const [ipGeoData, setIpGeoData] = useState({});
   const [destFilter, setDestFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('USAGE_DESC');
+  const [showPerRun, setShowPerRun] = useState(false);
+
+  // PeeringDB state
+  const [pdbLoading, setPdbLoading] = useState(false);
+  const [pdbError, setPdbError] = useState(null);
+  const [pdbCaps, setPdbCaps] = useState(null);
+  const [pdbAsn, setPdbAsn] = useState(null);
+  // ...existing code...
 
   // Process hop data with memoization
   const processedHopData = useMemo(() => {
@@ -55,6 +64,15 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     if (!processedHopData) return [];
     let list = processedHopData.hopData;
 
+    if (showPerRun) {
+      list = list.flatMap(h => {
+        const stamps = Array.isArray(h.pathTimestamps) && h.pathTimestamps.length
+          ? h.pathTimestamps
+          : (h.timestamp ? [h.timestamp] : []);
+        return stamps.map(ts => ({ ...h, timestamp: ts, _perRun: true }));
+      });
+    }
+
     // filter by destination
     if (destFilter !== 'ALL') {
       list = list.filter(h => h.destination === destFilter);
@@ -91,7 +109,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     };
 
     return [...list].sort(cmp);
-  }, [processedHopData, destFilter, sortBy]);
+  }, [processedHopData, destFilter, sortBy, showPerRun]);
 
 
   const handleHighlightPath = useCallback((hop) => {
@@ -128,15 +146,60 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     }
   }, [isOpen, processedHopData, fetchIPGeoData, ipGeoData]);
 
-  // Early return if no data
+  // Compute currentGeoData safely for hooks and render
+  const sharedIpForGeo = processedHopData?.sharedIP;
+  const existingGeoForGeo = processedHopData?.ipGeoData || null;
+  const currentGeoData = existingGeoForGeo || ipGeoData[sharedIpForGeo];
+
+  // Fetch PeeringDB on ASN change (must be before any early return)
+  useEffect(() => {
+    let cancelled = false;
+
+    async function run() {
+      setPdbError(null);
+      setPdbCaps(null);
+      setPdbAsn(null);
+
+      if (!isOpen || !currentGeoData?.asn) return;
+
+      const asnNum = peeringDbService.parseAsnNumber(currentGeoData.asn);
+      if (!asnNum) return;
+
+      setPdbLoading(true);
+      setPdbAsn(asnNum);
+      try {
+        const net = await peeringDbService.getNetByAsn(asnNum);
+        if (cancelled) return;
+        const caps = peeringDbService.summarizeCapabilities(net);
+
+        let logoUrl = null;
+        if (net?.org_id) {
+          const org = await peeringDbService.getOrgById(net.org_id);
+          if (!cancelled) {
+            logoUrl = peeringDbService.getLogoUrl({ net, org });
+          }
+        }
+
+        if (!cancelled) {
+          setPdbCaps(logoUrl ? { ...caps, logoUrl } : caps);
+        }
+      } catch {
+        if (!cancelled) setPdbError('Failed to load PeeringDB data');
+      } finally {
+        if (!cancelled) setPdbLoading(false);
+      }
+    }
+
+    run();
+    return () => { cancelled = true; };
+  }, [isOpen, currentGeoData?.asn]);
+
+  // Early return if no data (after all hooks)
   if (!processedHopData) {
     return null;
   }
 
   const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hopData: processedHops, ipGeoData: existingGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
-
-  // Use existing geo data or fetch new one
-  const currentGeoData = existingGeoData || ipGeoData[sharedIP];
 
   return (
     <div
@@ -171,7 +234,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             🔗 Network Hop Details
           </h3>
           <p style={{ margin: '5px 0 0 0', fontSize: '12px', color: '#666' }}>
-            Used in {destinations.length} destination(s), {processedHops.length} path(s)
+            Used in {new Set(visibleHops.map(h => h.destination)).size || destinations.length} destination(s), {visibleHops.length} path(s)
           </p>
         </div>
         <button
@@ -458,6 +521,223 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             </div>
           </div>
         )}
+        {/* PeeringDB Section (when ASN is available) */}
+        {currentGeoData && pdbAsn && (
+          <div style={{ marginBottom: '20px' }}>
+            <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
+              🤝 Peering Information (ASN {pdbAsn})
+            </h4>
+
+            {pdbLoading && (
+              <div style={{
+                background: 'linear-gradient(90deg, #3498db, #2980b9)',
+                color: 'white',
+                padding: '15px',
+                borderRadius: '8px',
+                fontSize: '14px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                boxShadow: '0 2px 8px rgba(52, 152, 219, 0.3)',
+                transform: 'translateZ(0)',
+                willChange: 'transform'
+              }}>
+                <div style={{
+                  width: '20px',
+                  height: '20px',
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTop: '2px solid white',
+                  borderRadius: '50%',
+                  animation: 'hopDrawerSpin 0.8s linear infinite',
+                  transform: 'translateZ(0)',
+                  willChange: 'transform'
+                }}></div>
+                <span style={{ fontWeight: '500' }}>Loading PeeringDB data...</span>
+                <style dangerouslySetInnerHTML={{
+                  __html: `
+                    @keyframes hopDrawerSpin {
+                      0% { transform: rotate(0deg); }
+                      100% { transform: rotate(360deg); }
+                    }
+                  `
+                }} />
+              </div>
+            )}
+
+            {pdbError && (
+              <div style={{
+                background: '#fdecea',
+                color: '#c0392b',
+                padding: '12px',
+                borderRadius: '6px',
+                fontSize: '14px',
+                border: '1px solid #f5c6cb'
+              }}>
+                {pdbError}
+              </div>
+            )}
+
+            {!pdbLoading && !pdbError && pdbCaps && (
+              <div
+                style={{
+                  background: '#2980b9',
+                  color: 'white',
+                  padding: '15px',
+                  borderRadius: '6px',
+                  fontSize: '14px'
+                }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '10px',
+                    fontSize: '16px',
+                    fontWeight: 'bold'
+                  }}
+                >
+                  {pdbCaps.logoUrl ? (
+                    <img
+                      src={pdbCaps.logoUrl}
+                      alt={`${pdbCaps.name || 'Network'} logo`}
+                      width={16}
+                      height={16}
+                      style={{
+                        width: 16,
+                        height: 16,
+                        objectFit: 'contain',
+                        borderRadius: 2,
+                        background: 'white',
+                        padding: 1
+                      }}
+                      onError={(e) => {
+                        e.currentTarget.onerror = null; // prevent infinite loop
+                        e.currentTarget.src = '/images/fallback-building.png'; // fallback image in public/
+                      }}
+                    />
+                  ) : (
+                    <span role="img" aria-label="building" style={{ fontSize: 16 }}>🏢</span>
+                  )}
+                  <span>
+                    {pdbCaps.name || 'Unknown network'} {pdbCaps.aka ? `(${pdbCaps.aka})` : ''}
+                  </span>
+                </div>
+
+
+
+
+                {/* Policy and metadata */}
+                <div style={{ color: 'white' }}>
+                  {pdbCaps.irr_as_set && (
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>IRR AS-SET:</strong> {pdbCaps.irr_as_set}
+                    </div>
+                  )}
+                  {pdbCaps.policy_general && (
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>Peering Policy:</strong> {pdbCaps.policy_general}
+                    </div>
+                  )}
+                  {pdbCaps.policy_contracts && (
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>Contracts:</strong> {pdbCaps.policy_contracts}
+                    </div>
+                  )}
+
+                  {/* Traffic info */}
+                  {(pdbCaps.info_traffic || pdbCaps.info_ratio || pdbCaps.info_scope || pdbCaps.info_type) && (
+                    <div style={{ marginBottom: '8px' }}>
+                      {pdbCaps.info_traffic && (
+                        <div style={{ marginBottom: '5px' }}>
+                          <strong>Traffic Level:</strong> {pdbCaps.info_traffic}
+                        </div>
+                      )}
+                      {pdbCaps.info_ratio && (
+                        <div style={{ marginBottom: '5px' }}>
+                          <strong>Traffic Ratio:</strong> {pdbCaps.info_ratio}
+                        </div>
+                      )}
+                      {pdbCaps.info_scope && (
+                        <div style={{ marginBottom: '5px' }}>
+                          <strong>Scope:</strong> {pdbCaps.info_scope}
+                        </div>
+                      )}
+                      {pdbCaps.info_type && (
+                        <div style={{ marginBottom: '5px' }}>
+                          <strong>Network Type:</strong> {pdbCaps.info_type}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {(pdbCaps.info_prefixes4 != null || pdbCaps.info_prefixes6 != null) && (
+                    <div style={{ marginBottom: '5px' }}>
+                      <strong>Advertised Prefixes:</strong>{' '}
+                      {pdbCaps.info_prefixes4 != null ? `${pdbCaps.info_prefixes4} IPv4` : ''}
+                      {pdbCaps.info_prefixes4 != null && pdbCaps.info_prefixes6 != null ? ' • ' : ''}
+                      {pdbCaps.info_prefixes6 != null ? `${pdbCaps.info_prefixes6} IPv6` : ''}
+                    </div>
+                  )}
+
+                  {/* Capability chips (match service chips style) */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
+                    <span style={{
+                      background: pdbCaps.info_ipv4 ? '#27ae60' : '#7f8c8d',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}>
+                      IPv4: {pdbCaps.info_ipv4 ? 'Yes' : 'No'}
+                    </span>
+                    <span style={{
+                      background: pdbCaps.info_ipv6 ? '#27ae60' : '#7f8c8d',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}>
+                      IPv6: {pdbCaps.info_ipv6 ? 'Yes' : 'No'}
+                    </span>
+                    <span style={{
+                      background: pdbCaps.info_unicast ? '#27ae60' : '#7f8c8d',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}>
+                      Unicast: {pdbCaps.info_unicast ? 'Yes' : 'No'}
+                    </span>
+                    <span style={{
+                      background: pdbCaps.info_multicast ? '#27ae60' : '#7f8c8d',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold'
+                    }}>
+                      Multicast: {pdbCaps.info_multicast ? 'Yes' : 'No'}
+                    </span>
+                  </div>
+                  <div style={{ marginTop: '6px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    {pdbCaps.policy_url && (
+                      <a href={pdbCaps.policy_url} target="_blank" rel="noreferrer"
+                        style={{ color: 'white', textDecoration: 'underline' }}>
+                        View Peering Policy
+                      </a>
+                    )}
+                    {pdbCaps.website && (
+                      <a href={pdbCaps.website} target="_blank" rel="noreferrer"
+                        style={{ color: 'white', textDecoration: 'underline' }}>
+                        Website
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Path Usage Summary */}
         <div style={{ marginBottom: '20px' }}>
@@ -471,7 +751,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             border: '1px solid #bee5eb'
           }}>
             <div style={{ marginBottom: '10px' }}>
-              <strong>Destinations:</strong> {destinations.join(', ')}
+             <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
             </div>
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
@@ -480,7 +760,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
             </div>
             <div>
-              <strong>Total Occurrences:</strong> {processedHops.length} path(s)
+              <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
             </div>
 
           </div>
@@ -529,6 +809,16 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 <option value="TIME_ASC">Timestamp (oldest)</option>
               </select>
             </label>
+
+          {/* Per-run toggle */}
+            <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="checkbox"
+                checked={showPerRun}
+                onChange={(e) => setShowPerRun(e.target.checked)}
+              />
+              Per-run entries
+            </label>
           </div>
 
 
@@ -544,61 +834,85 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
 
               {/* Path Header */}
-            <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{
-                  background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
-                  color: 'white',
-                  padding: '4px 8px',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  fontWeight: 'bold'
-                }}>
-                  {hop.pathType}
-                </span>
-                <span style={{ fontWeight: 'bold', color: '#2c3e50' }}>
-                  → {hop.destination}
-                </span>
+              <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{
+                    background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
+                    color: 'white',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {hop.pathType}
+                  </span>
+                  <span style={{ fontWeight: 'bold', color: '#2c3e50' }}>
+                    → {hop.destination}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleHighlightPath(hop)}
+                  title="Highlight this path in the graph"
+                  style={{
+                    background: '#3498db',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Highlight path
+                </button>
               </div>
-              <button
-                onClick={() => handleHighlightPath(hop)}
-                title="Highlight this path in the graph"
-                style={{
-                  background: '#3498db',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  padding: '6px 10px',
-                  fontSize: '12px',
-                  cursor: 'pointer'
-                }}
-              >
-                Highlight path
-              </button>
-            </div>
-            
+
 
 
               {/* Path Details */}
               <div style={{ fontSize: '14px', color: '#666', marginBottom: '12px' }}>
                 <div style={{ marginBottom: '5px' }}>
-                  🔢 <strong>Hop #{hop.hopNumber} / {pathTypes.length}</strong> in this path
+                  🔢 <strong>Hop #{hop.hopNumber} / {hop.pathLength}</strong> in this path
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  📊 <strong>Usage:</strong> {hop.pathPercent}% ({hop.pathCount}/{hop.totalTraces} traces)
+                  📊 <strong>Usage:</strong> {hop.pathPercent ?? 0}%
+                  {(typeof hop.pathCount === 'number' && typeof hop.totalTraces === 'number') && (
+                    <> ({hop.pathCount}/{hop.totalTraces} traces)</>
+                  )}
                 </div>
                 <div style={{ marginBottom: '5px' }}>
-                  ⏱️ <strong>Path Avg RTT:</strong> {hop.pathAvgRtt}ms
+                  ⏱️ <strong>Path Avg RTT:</strong>{' '}
+                  {Number.isFinite(hop.pathAvgRtt)
+                    ? `${hop.pathAvgRtt}ms`
+                    : Array.isArray(hop.rtt_ms) && hop.rtt_ms.length
+                      ? `${(hop.rtt_ms.reduce((a, b) => a + b, 0) / hop.rtt_ms.length).toFixed(2)}ms`
+                      : 'N/A'}
                 </div>
                 <div style={{ marginBottom: '5px' }}>
                   🧪 <strong>Protocol:</strong> {hop.protocol || 'Unknown'}
                 </div>
                 {hop.timestamp && (
                   <div style={{ marginBottom: '5px' }}>
-                    📅 <strong>Timestamp:</strong> {new Date(hop.timestamp).toLocaleString()}
+                   📅 <strong>Timestamp:</strong>{' '}
+                    {showPerRun
+                      ? <span>{new Date(hop.timestamp).toLocaleString()}</span>
+                      : (
+                        <div>
+                          {(Array.isArray(hop.pathTimestamps) && hop.pathTimestamps.length
+                            ? hop.pathTimestamps
+                            : [hop.timestamp]
+                          ).map((ts, i) => (
+                            <div key={i}>{new Date(ts).toLocaleString()}</div>
+                          ))}
+                        </div>
+                      )
+                    }
                   </div>
                 )}
+               
               </div>
+              
+             
 
               {/* RTT Performance for this path */}
               <div style={{
@@ -674,11 +988,12 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               <strong>Path Diversity:</strong> Appears in {pathTypes.length} different path type(s)
             </div>
             <div style={{ marginBottom: '8px' }}>
-              <strong>Traffic Distribution:</strong> Handles traffic across {processedHops.length} different path configuration(s)
+              <strong>Traffic Distribution:</strong> Handles traffic across {visibleHops.length} path item(s)
             </div>
             <div>
               <strong>Reliability Role:</strong>
-              {processedHops.some(h => h.pathType === 'PRIMARY') ?
+           
+              {visibleHops.some(h => h.pathType === 'PRIMARY') ?
                 ' Critical infrastructure (used in primary paths)' :
                 ' Alternative routing (backup paths only)'
               }

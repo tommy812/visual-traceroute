@@ -104,9 +104,14 @@ export function buildGraph({
           pathType: type,
           is_timeout: !hop || hop.is_timeout || !hop.ip,
           timestamp: pathObj?.timeStamp ?? null,
+          pathTimestamps: Array.isArray(pathObj?.timestamps) ? pathObj.timestamps : [],
+          protocol: pathObj?.protocol ?? (hop?.protocol ?? null),
+
           pathPercent: pathObj?.percent ?? null,
           pathAvgRtt: pathObj?.avg_rtt ?? null,
-          protocol: pathObj?.protocol ?? null
+          pathCount: pathObj?.count ?? null,
+          totalTraces: destData?.total_traces ?? null,
+          pathLength: hops.length
         });
       });
     };
@@ -143,7 +148,7 @@ export function buildGraph({
     const [typeAndValue] = left.split('@'); // ignore extra
     const type = typeAndValue.startsWith('timeout') ? 'timeout'
       : typeAndValue.startsWith('ip:') ? 'ip'
-      : 'prefix';
+        : 'prefix';
     const value = type === 'ip'
       ? typeAndValue.substring(3)
       : type === 'prefix'

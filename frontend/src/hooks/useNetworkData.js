@@ -1,6 +1,5 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
-import apiService from '../services/api';
-import dataTransformer from '../services/dataTransformer';
+import dataRepository from '../services/dataRepository';
 
 export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol) => {
   const [pathData, setPathData] = useState({});
@@ -39,23 +38,33 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     return JSON.stringify(fetchParams) !== JSON.stringify(lastFetchParams);
   }, [fetchParams, lastFetchParams]);
 
-  const loadNetworkData = useCallback(async () => {
+    const loadNetworkData = useCallback(async () => {
     if (!shouldFetch) return;
 
     try {
       setLoading(true);
       setError(null);
-      
-      const response = await apiService.getNetworkData(fetchParams);
-      const transformedData = dataTransformer.transformNetworkData(response.data);
-      const validatedData = dataTransformer.validateTransformedData(transformedData);
-      
-      setPathData(validatedData);
+
+      // 1) Try cache-first render for instant UI if available
+      const cached = dataRepository.getCachedNetworkData(fetchParams);
+      if (cached && Object.keys(cached).length > 0) {
+        setPathData(cached);
+      }
+
+      // 2) Fetch and cache from backend (stale-while-revalidate)
+      const fresh = await dataRepository.fetchAndCacheNetworkData(fetchParams);
+      setPathData(fresh);
       setLastFetchParams(fetchParams);
+
+      // 3) Background prefetch for last 30 days (per requirement)
+      //    This does not affect current render.
+      const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
+      dataRepository.prefetchLast30Days(destinationStrings);
     } catch (err) {
       console.error('Error loading network data:', err);
       setError(err.message || 'Failed to load network data');
       setPathData({});
+      setLastFetchParams(fetchParams);
     } finally {
       setLoading(false);
     }
