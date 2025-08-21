@@ -1,17 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Graph from 'react-graph-vis';
-import dataTransformer from '../../services/dataTransformer';
 import ipGeoService from '../../services/ipGeoService';
 import GraphControls from './GraphControls';
 
 import { useNetworkGraphModel } from '../../hooks/useNetworkGraphModel';
 import { useGraphData } from '../../hooks/useGraphData';
 import { usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../hooks';
-import { minimizeCrossings } from '../../utils/minimizeCrossingsUtils';
-import { generateDestinationColor } from '../../utils/colorUtils';
-import { curvedForIndex } from '../../utils/edges';
-import { computeAlignedLevels, computeLaneYByIp, computeDestinationLanes } from '../../utils/graphLayoutUtils';
-
 
 
 // Error Boundary for NetworkGraph
@@ -227,7 +221,8 @@ const NetworkGraph = React.memo(({
         dragView: true,
         selectConnectedEdges: false
       },
-      configure: { enabled: false }
+      configure: { enabled: false },
+      layout: { improvedLayout: false }
     };
 
     switch (layoutOptimization) {
@@ -243,7 +238,7 @@ const NetworkGraph = React.memo(({
               nodeSpacing: 80,
               treeSpacing: 60,
               levelSeparation: 250,
-              blockShifting: true,
+              blockShifting: false,
               edgeMinimization: true,
               parentCentralization: false
             }
@@ -271,14 +266,14 @@ const NetworkGraph = React.memo(({
               nodeSpacing: 120,
               treeSpacing: 100,
               levelSeparation: 300,
-              blockShifting: true,
+              blockShifting: false,
               edgeMinimization: true,
               parentCentralization: false
             }
           },
           physics: { enabled: false },
           edges: {
-            smooth: false, // Straight lines only
+            smooth: true, // Straight lines only
             chosen: false
           }
         };

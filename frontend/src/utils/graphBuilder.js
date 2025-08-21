@@ -47,7 +47,42 @@ export function buildGraph({
 
   // Lanes for destinations
   const { laneByDest } = computeDestinationLanes(filteredData);
-  const laneHeight = 160;
+  const rowHeight = 80;
+
+// Order destinations by lane index and compute a level offset per destination
+ const orderedDestinations = Array.from(laneByDest.entries())
+   .sort((a, b) => a[1] - b[1])
+   .map(([d]) => d);
+ const rowOffsetByDest = new Map();
+ {
+   let cumulativeLevel = 0;
+   orderedDestinations.forEach(dest => {
+     const dp = filteredData[dest];
+     const lengths = [];
+     if (dp?.includePrimary !== false && Array.isArray(dp?.primary_path?.path)) {
+       lengths.push(dp.primary_path.path.length);
+     }
+     (Array.isArray(dp?.alternatives) ? dp.alternatives : []).forEach(alt => {
+       lengths.push(Array.isArray(alt?.path) ? alt.path.length : 0);
+     });
+     const maxLen = lengths.length ? Math.max(...lengths) : 0;
+     rowOffsetByDest.set(dest, cumulativeLevel);
+     cumulativeLevel += maxLen + 10; // +1 gap between destinations
+   });
+ }
+
+
+// Helpers to detect IP strings
+ const isIPv4 = (s) => {
+   if (typeof s !== 'string') return false;
+   const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+   if (!m) return false;
+   return m.slice(1).every(o => Number(o) >= 0 && Number(o) <= 255);
+ };
+ const isIPv6 = (s) => typeof s === 'string' && s.includes(':');
+ const normalizeIp = (s) => (isIPv4(s) || isIPv6(s)) ? s : null;
+
+
 
   // Build a detail bucket per logical node key so drawers always work
   // Key format:
@@ -72,6 +107,25 @@ export function buildGraph({
       pathDescriptors.push({ destination, destColor, pathId, hops });
 
       globalMaxHop = Math.max(globalMaxHop, hops.length);
+
+      // Determine expected destination IP (from data or destination key if it's an IP)
+      const expectedDestIp =
+        destData?.destination_ip ??
+        destData?.dest_ip ??
+        destData?.ip ??
+        normalizeIp(destination);
+
+      // Find the last real hop index (non-timeout with an IP)
+      let lastRealIdx = -1;
+      for (let i = hops.length - 1; i >= 0; i--) {
+        const h = hops[i];
+        if (h && !h.is_timeout && h.ip) { lastRealIdx = i; break; }
+      }
+      const reachedDestination =
+        lastRealIdx >= 0 &&
+        !!expectedDestIp &&
+        hops[lastRealIdx]?.ip === expectedDestIp;
+
 
       // Collect details keyed by the final rendering key
       hops.forEach((hop, idx) => {
@@ -107,6 +161,9 @@ export function buildGraph({
           pathTimestamps: Array.isArray(pathObj?.timestamps) ? pathObj.timestamps : [],
           protocol: pathObj?.protocol ?? (hop?.protocol ?? null),
 
+          destinationReached: (idx === lastRealIdx) && reachedDestination,
+
+
           pathPercent: pathObj?.percent ?? null,
           pathAvgRtt: pathObj?.avg_rtt ?? null,
           pathCount: pathObj?.count ?? null,
@@ -121,9 +178,6 @@ export function buildGraph({
       destData.alternatives.forEach((alt, i) => addPath(alt, 'ALTERNATIVE', i + 1));
     }
   });
-
-  // Destination column is last
-  const destinationLevel = globalMaxHop + 1;
 
   // Source node
   const sourceId = addNodeOnce('source', (id) => ({
@@ -158,16 +212,18 @@ export function buildGraph({
     const [destAndHop] = rest.split('@h:');
     const [dest, hopStr] = [destAndHop, rest.substring(destAndHop.length + 3)];
     const hopNumber = parseInt(hopStr, 10);
-    const laneIndex = laneByDest.get(dest) ?? 0;
-    const y = laneIndex * laneHeight;
+    const baseRows = rowOffsetByDest.get(dest) ?? 0;
+    const yIndex = baseRows + hopNumber; // stack rows by hop per destination
+    const y = yIndex * rowHeight;
 
     if (type === 'timeout') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
+        const isMaxTtl = hopNumber === 30;
         return {
           id,
           label: '⏱️',
-          title: `Timeout • Hop #${hopNumber} • ${dest}`,
+          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber} • ${dest}`,
           color: { background: '#F44336', border: '#D32F2F' },
           font: { size: 12, color: '#FFF', strokeWidth: 2, strokeColor: '#fff' },
           shape: 'dot',
@@ -182,16 +238,18 @@ export function buildGraph({
       });
     } else if (type === 'ip') {
       const display = list[0]?.hostname || value;
+      const isTerminal = list.some(d => d.destinationReached);
+
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
         list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
         return {
           id,
           label: display,
-          title: `IP: ${value}\nHop #${hopNumber} • ${dest}`,
-          color: { background: '#FFA726', border: '#FF8F00' },
+          title: `IP: ${value}\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
+          color: { background: '#FFA726', border: isTerminal ? '#2ECC71' : '#FF8F00' },
           font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
-          shape: 'dot',
+          shape: isTerminal ? 'box' : 'dot',
           size: 18,
           nodeType: 'hop',
           ip: value,
@@ -261,24 +319,7 @@ export function buildGraph({
       }
     });
 
-    // last edge to destination
-    const destKey = `dest:${destination}`;
-    const destId = addNodeOnce(destKey, (id) => ({
-      id,
-      label: destination,
-      color: { background: destColor, border: '#333' },
-      font: { size: 14, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
-      shape: 'box',
-      size: 28,
-      nodeType: 'destination',
-      level: destinationLevel,
-      y: laneIndex * laneHeight,
-      physics: false,
-      fixed: { x: false, y: true }
-    }));
-    if (lastId !== destId) {
-      addEdgeUsage(lastId, destId, destination, destColor, pathId);
-    }
+  
   });
 
   // Emit edges (bundle multi-destination colors)

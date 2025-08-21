@@ -151,6 +151,16 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
   const existingGeoForGeo = processedHopData?.ipGeoData || null;
   const currentGeoData = existingGeoForGeo || ipGeoData[sharedIpForGeo];
 
+  // Detect "Max TTL reached" for timeout selections
+  const MAX_TTL = 30;
+  const isMaxTtlReturned = useMemo(() => {
+    const list = Array.isArray(processedHopData?.hopData) ? processedHopData.hopData : [];
+    return list.some(h =>
+      (h?.is_timeout || !h?.ip) &&
+      ((h?.hopNumber ?? h?.hop_number ?? 0) >= MAX_TTL)
+    );
+  }, [processedHopData]);
+
   // Fetch PeeringDB on ASN change (must be before any early return)
   useEffect(() => {
     let cancelled = false;
@@ -298,6 +308,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
           </div>
         )}
 
+
         {/* Multiple hostnames warning */}
         {hostnames.length > 1 && (
           <div style={{ marginBottom: '20px' }}>
@@ -315,6 +326,34 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             </div>
           </div>
         )}
+
+
+        {/* Path Usage Summary */}
+        <div style={{ marginBottom: '20px' }}>
+          <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
+            📊 Usage Summary
+          </h4>
+          <div style={{
+            background: '#e8f4f8',
+            padding: '15px',
+            borderRadius: '6px',
+            border: '1px solid #bee5eb'
+          }}>
+            <div style={{ marginBottom: '10px' }}>
+              <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <strong>Path Types:</strong> {pathTypes.join(', ')}
+            </div>
+            <div>
+              <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
+            </div>
+            <div>
+              <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
+            </div>
+
+          </div>
+        </div>
 
         {/* IP Geolocation Section */}
         {currentGeoData && (
@@ -487,12 +526,21 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
                 <span style={{ fontSize: '20px' }}>⏱️</span>
-                <span style={{ fontWeight: 'bold' }}>Timeout Hop - No IP Response</span>
+                <span style={{ fontWeight: 'bold' }}>
+                  {isMaxTtlReturned ? `Max TTL (${MAX_TTL}) reached` : 'Timeout Hop - No IP Response'}
+                </span>
               </div>
-              <p style={{ margin: 0, opacity: 0.9 }}>
-                No geolocation data is available for this hop because it represents a network timeout.
-                The packets sent to this hop did not receive a response, so there's no IP address to analyze.
-              </p>
+              {isMaxTtlReturned ? (
+                <p style={{ margin: 0, opacity: 0.9 }}>
+                  The traceroute reached the maximum TTL without receiving a reply.
+                  This usually indicates the destination was not reached or Protocol used is filtered.
+                </p>
+              ) : (
+                <p style={{ margin: 0, opacity: 0.9 }}>
+                  No geolocation data is available for this hop because it represents a network timeout.
+                  The packets sent to this hop did not receive a response, so there's no IP address to analyze.
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -739,32 +787,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
           </div>
         )}
 
-        {/* Path Usage Summary */}
-        <div style={{ marginBottom: '20px' }}>
-          <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
-            📊 Usage Summary
-          </h4>
-          <div style={{
-            background: '#e8f4f8',
-            padding: '15px',
-            borderRadius: '6px',
-            border: '1px solid #bee5eb'
-          }}>
-            <div style={{ marginBottom: '10px' }}>
-             <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
-            </div>
-            <div style={{ marginBottom: '10px' }}>
-              <strong>Path Types:</strong> {pathTypes.join(', ')}
-            </div>
-            <div>
-              <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
-            </div>
-            <div>
-              <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
-            </div>
 
-          </div>
-        </div>
 
 
 
@@ -810,7 +833,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               </select>
             </label>
 
-          {/* Per-run toggle */}
+            {/* Per-run toggle */}
             <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <input
                 type="checkbox"
@@ -893,7 +916,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 </div>
                 {hop.timestamp && (
                   <div style={{ marginBottom: '5px' }}>
-                   📅 <strong>Timestamp:</strong>{' '}
+                    📅 <strong>Timestamp:</strong>{' '}
                     {showPerRun
                       ? <span>{new Date(hop.timestamp).toLocaleString()}</span>
                       : (
@@ -909,10 +932,10 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                     }
                   </div>
                 )}
-               
+
               </div>
-              
-             
+
+
 
               {/* RTT Performance for this path */}
               <div style={{
@@ -992,7 +1015,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             </div>
             <div>
               <strong>Reliability Role:</strong>
-           
+
               {visibleHops.some(h => h.pathType === 'PRIMARY') ?
                 ' Critical infrastructure (used in primary paths)' :
                 ' Alternative routing (backup paths only)'
