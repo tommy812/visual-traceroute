@@ -2,7 +2,7 @@ import React from 'react';
 import DestinationSelector from './forms/DestinationSelector';
 import AdvancedFilters from './forms/AdvancedFilters';
 import TimeRangeSelector from './forms/TimeRangeSelector';
-
+import SideBarFooter from './forms/sideBarFooter.js'
 
 const Sidebar = ({
   // Date range
@@ -20,11 +20,16 @@ const Sidebar = ({
   onClearAll,                      // () => void
   searchTerm,                      // string
   onSearchTermChange,              // (s:string) => void
+  selectedDomainNames,
+  domainGroups,
+  toggleDomain,
+  getDomainSelectionState,
 
   // Advanced filters
   availableProtocols,
-  selectedProtocol,
-  setSelectedProtocol,
+  selectedProtocols,
+  toggleProtocol,
+  clearProtocols,
   selectedPathTypes,
   togglePathType,
   minRTT,
@@ -38,7 +43,9 @@ const Sidebar = ({
 
   // Actions
   onResetFilters,
-  apiHealthy
+  apiHealthy,
+  onOpenSettings,
+  onGoLanding
 }) => {
   return (
     <div style={{
@@ -47,9 +54,10 @@ const Sidebar = ({
       borderRight: '1px solid #dee2e6',
       display: 'flex',
       flexDirection: 'column',
-      overflowY: 'auto',
+      
       height: '100vh'
     }}>
+      <div style={{flex: 1, overflowY: 'auto' }}>
       {/* Header with title + API status */}
       <div style={{ padding: "20px 15px 15px 15px", backgroundColor: "#fff", borderBottom: "1px solid #dee2e6" }}>
         <h1 style={{ margin: 0, fontSize: "18px", color: "#333" }}>🌐 Network Traceroute</h1>
@@ -69,6 +77,10 @@ const Sidebar = ({
         totalAvailableCount={totalAvailableCount}
         selectedDestinationIds={selectedDestinationIds}
         selectedDestinationAddresses={selectedDestinationAddresses}
+        selectedDomainNames={selectedDomainNames}
+        domainGroups={domainGroups}
+        toggleDomain={toggleDomain}
+        getDomainSelectionState={getDomainSelectionState}
         onToggle={onToggle}
         onSelectAll={onSelectAll}
         onClearAll={onClearAll}
@@ -87,8 +99,9 @@ const Sidebar = ({
       {/* Advanced Filters */}
       <AdvancedFilters
         availableProtocols={availableProtocols}
-        selectedProtocol={selectedProtocol}
-        setSelectedProtocol={setSelectedProtocol}
+        selectedProtocols={selectedProtocols}
+        toggleProtocol={toggleProtocol}
+        clearProtocols={clearProtocols}
         selectedPathTypes={selectedPathTypes}
         togglePathType={togglePathType}
         minRTT={minRTT}
@@ -101,6 +114,13 @@ const Sidebar = ({
         setShowPrimaryOnly={setShowPrimaryOnly}
         onReset={onResetFilters}
       />
+    </div>
+
+    {/*Footer*/}
+    <SideBarFooter
+      onOpenSettings={onOpenSettings}
+      onGoLanding={onGoLanding}
+    />
     </div>
   );
 };

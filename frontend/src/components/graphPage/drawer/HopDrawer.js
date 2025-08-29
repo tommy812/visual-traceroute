@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import ipGeoService from '../../services/ipGeoService';
-import peeringDbService from '../../services/peeringDbService';
+import ipGeoService from '../../../services/ipGeoService';
+import peeringDbService from '../../../services/peeringDbService';
 
 // Optimized HopDrawer component with React.memo
 const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null }) => {

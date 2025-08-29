@@ -49,7 +49,11 @@ class TracerouteController {
       error,
       destination_id,
       traceroute_methods(name,version,description),
-      destinations:destination_id(id,address)
+      destinations:destination_id(
+        id,
+        address,
+        domain:domain_id (id, name)
+      )
     `;
 
       let query = supabase
@@ -110,7 +114,11 @@ class TracerouteController {
       error,
       destination_id,
       traceroute_methods(name,version,description),
-      destinations:destination_id(id,address)
+      destinations:destination_id(
+        id,
+        address,
+        domain:domain_id (id, name)
+      )
     `;
 
       const { data: traceRun, error: traceError } = await supabase
@@ -188,23 +196,20 @@ class TracerouteController {
       } = req.query;
 
       const selectStr = `
-      id,
-      timestamp,
-      method_id,
-      destination_id,
-      traceroute_methods(name,version,description),
-      destinations:destination_id(id,address),
-      hops(
         id,
-        hop_number,
-        ip,
-        hostname,
-        rtt1,
-        rtt2,
-        rtt3,
-        extra
-      )
-    `;
+        timestamp,
+        method_id,
+        destination_id,
+        traceroute_methods(name,version,description),
+        destinations:destination_id (
+          id,
+          address,
+          domain:domain_id ( id, name )
+        ),
+        hops(
+          id, hop_number, ip, hostname, rtt1, rtt2, rtt3, extra
+        )
+      `;
 
       let query = supabase
         .from('trace_runs')
@@ -272,7 +277,7 @@ class TracerouteController {
 
       let query = supabase
         .from('destinations')
-        .select('id,address')                 // already unique by design
+        .select('id,address,domain:domain_id(id,name)')       // already unique by design
         .order('address', { ascending: true })
         .range(0, limit - 1);                 // avoid PostgREST 1k default
 
@@ -281,11 +286,14 @@ class TracerouteController {
       const { data, error } = await query;
       if (error) throw error;
 
-      res.json({
-        success: true,
-        data,                                 // [{id, address}, ...]
-        count: data.length
+      const grouped = {};
+      data.forEach(row => {
+        const dn = row.domain?.name || '(unassigned)';
+        if (!grouped[dn]) grouped[dn] = { domain: { id: row.domain?.id || null, name: dn }, destinations: [] };
+        grouped[dn].destinations.push({ id: row.id, address: row.address });
       });
+
+      res.json({ success: true, data: grouped, count: data.length });
     } catch (error) {
       console.error('Error fetching destinations:', error);
       res.status(500).json({
@@ -309,7 +317,10 @@ class TracerouteController {
       const selectStr = `
         id,
         timestamp,
-        destinations:destination_id(address),
+        destinations:destination_id(
+          address,
+          domain:domain_id(name,id)
+        ),
         traceroute_methods(name,description)
       `;
 

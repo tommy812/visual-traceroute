@@ -1,7 +1,10 @@
 import React from "react";
-import NetworkGraph from "../components/graph/NetworkGraph";
-import HopDrawer from "../components/drawer/HopDrawer";
-import Sidebar from "../components/sidebar/Sidebar";
+import NetworkGraph from "../components/graphPage/graph/NetworkGraph";
+import HopDrawer from "../components/graphPage/drawer/HopDrawer";
+import Sidebar from "../components/graphPage/sidebar/Sidebar";
+import LandingPage from "../components/landingPage/landingPage"
+import DocumentationPage from "../components/documentationPage/documentationPage"
+
 import "../styles/styles.css";
 import "../styles/network.css";
 // hooks
@@ -83,13 +86,17 @@ class AppErrorBoundary extends React.Component {
 }
 
 // Optimized App component with React.memo
-const App = React.memo(() => {
+const ChartsApp = React.memo(({onGoLanding}) => {
   // Use custom hooks for state management
   const filters = useFilters();
   const { dateRange, handleQuickAccess, resetToCurrentDay, currentPeriod } = useDateRange();
   const {
     selectedDestinationIds,
     selectedDestinationAddresses,
+    selectedDomainNames,
+    domainGroups,
+    toggleDomain,
+    getDomainSelectionState,
     availableDestinations,
     availableProtocols,
     resetDestinations,
@@ -100,15 +107,20 @@ const App = React.memo(() => {
   } = useDestinations();
 
 
-  const { pathData, loading, error } = useNetworkData(selectedDestinationAddresses, dateRange, filters.selectedProtocol);
+  const { pathData, loading, error } = useNetworkData(selectedDestinationAddresses, dateRange, filters.selectedProtocols);
   const { selectedHop, isDrawerOpen, handleHopSelect, closeDrawer } = useHopDrawer();
   const apiHealthy = !error;
 
+  const handleOpenSettings = React.useCallback(() => {
+    // placeholder: open settings modal (implement later)
+    alert('Settings panel coming soon');
+  }, []);
+
   // Filtered destinations
   const filteredDestinations = React.useMemo(
-    () => getFilteredDestinations(filters.destinationSearchTerm,),
-    [getFilteredDestinations, filters.destinationSearchTerm]
-  );
+   () => getFilteredDestinations(filters.destinationSearchTerm, filters),
+   [getFilteredDestinations, filters.destinationSearchTerm, filters.selectedProtocols]
+ );
 
   const handleDrawerHighlight = React.useCallback((pathId) => {
     window.dispatchEvent(new CustomEvent('graph:highlightPath', { detail: { pathId } }));
@@ -174,6 +186,9 @@ const App = React.memo(() => {
       </div>
     );
   }
+ 
+     
+
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "Arial, sans-serif", overflow: "hidden" }}>
@@ -185,14 +200,19 @@ const App = React.memo(() => {
         totalAvailableCount={availableDestinations.length}
         selectedDestinationIds={selectedDestinationIds}
         selectedDestinationAddresses={selectedDestinationAddresses}
+        selectedDomainNames={selectedDomainNames}
+        domainGroups={domainGroups}
+        toggleDomain={toggleDomain}
+        getDomainSelectionState={getDomainSelectionState}
         onToggle={toggleDestination}
         onSelectAll={selectAll}
         onClearAll={clearAll}
         searchTerm={filters.destinationSearchTerm}
         onSearchTermChange={filters.setDestinationSearchTerm}
         availableProtocols={availableProtocols}
-        selectedProtocol={filters.selectedProtocol}
-        setSelectedProtocol={filters.setSelectedProtocol}
+        selectedProtocols={filters.selectedProtocols}
+        toggleProtocol={filters.toggleProtocol}
+        clearProtocols={filters.clearProtocols}
         selectedPathTypes={filters.selectedPathTypes}
         togglePathType={filters.togglePathType}
         minRTT={filters.minRTT}
@@ -205,11 +225,13 @@ const App = React.memo(() => {
         setShowPrimaryOnly={filters.setShowPrimaryOnly}
         onResetFilters={handleResetFilters}
         apiHealthy={apiHealthy}
+        onOpenSettings={handleOpenSettings}
+        onGoLanding={onGoLanding}
       />
 
       {/* Right Side - Graph */}
       <div style={{ flex: "1", display: "flex", flexDirection: "column", backgroundColor: "#fff", position: "relative" }}>
-        {selectedDestinationIds.length === 0 ? (
+        {selectedDestinationAddresses.length === 0 ? (
           <div> {/* keep your current empty-state JSX */} </div>
         ) : (
           <div style={{ flex: "1", position: "relative" }}>
@@ -223,7 +245,7 @@ const App = React.memo(() => {
               maxRTT={filters.maxRTT}
               minUsagePercent={filters.minUsagePercent}
               selectedPathTypes={filters.selectedPathTypes}
-              selectedProtocol={filters.selectedProtocol}
+              selectedProtocols={filters.selectedProtocols}
             />
             <div style={{
               position: "absolute",
@@ -252,13 +274,43 @@ const App = React.memo(() => {
   );
 });
 
-App.displayName = 'App';
+ChartsApp.displayName = 'ChartsApp';
+
+// Landing gate wrapper
+function AppWithLanding() {
+  const [mode, setMode] = React.useState(() => {
+    try { return localStorage.getItem('enteredCharts') === '1' ? 'charts' : 'landing'; }
+    catch { return 'landing'; }
+  });
+
+  const enterCharts = React.useCallback(() => {
+    setMode('charts');
+    try { localStorage.setItem('enteredCharts', '1'); } catch {}
+  }, []);
+
+  const showLanding = React.useCallback(() => {
+    setMode('landing');
+    try { localStorage.removeItem('enteredCharts'); } catch {}
+  }, []);
+
+  const showDocs = React.useCallback(() => {
+    setMode('docs');
+  }, []);
+
+  if (mode === 'landing') {
+    return <LandingPage onEnter={enterCharts} onShowDocs={showDocs} />;
+  }
+  if (mode === 'docs') {
+    return <DocumentationPage onBack={showLanding} onEnter={enterCharts} />;
+  }
+  return <ChartsApp onGoLanding={showLanding} />;
+}
 
 // Export the App wrapped with error boundary
 export default function AppWithErrorBoundary() {
   return (
     <AppErrorBoundary>
-      <App />
+      <AppWithLanding />
     </AppErrorBoundary>
   );
 }

@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import dataRepository from '../services/dataRepository';
 
-export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol) => {
+export const useNetworkData = (selectedDestinations, dateRange, selectedProtocols) => {
   const [pathData, setPathData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);

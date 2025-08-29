@@ -8,7 +8,7 @@ export const useFilters = () => {
   const [maxRTT, setMaxRTT] = useState('');
   const [minUsagePercent, setMinUsagePercent] = useState('');
   const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
-  const [selectedProtocol, setSelectedProtocol] = useState('');
+  const [selectedProtocols, setSelectedProtocols] = useState([]);
   const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
 
   // Memoize the reset function to prevent unnecessary re-renders
@@ -18,7 +18,7 @@ export const useFilters = () => {
     setMaxRTT('');
     setMinUsagePercent('');
     setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
-    setSelectedProtocol('');
+    setSelectedProtocols([]);
     setShowPrimaryOnly(false);
   }, []);
 
@@ -29,7 +29,7 @@ export const useFilters = () => {
     maxRTT,
     minUsagePercent,
     selectedPathTypes,
-    selectedProtocol,
+    selectedProtocols,
     showPrimaryOnly
   }), [
     destinationSearchTerm,
@@ -37,7 +37,7 @@ export const useFilters = () => {
     maxRTT,
     minUsagePercent,
     selectedPathTypes,
-    selectedProtocol,
+    selectedProtocols,
     showPrimaryOnly
   ]);
 
@@ -48,7 +48,7 @@ export const useFilters = () => {
     setMaxRTT,
     setMinUsagePercent,
     setSelectedPathTypes,
-    setSelectedProtocol,
+    setSelectedProtocols,
     setShowPrimaryOnly,
     resetFilters
   }), [resetFilters]);
@@ -59,9 +59,22 @@ export const useFilters = () => {
     );
   }, []);
 
+  const toggleProtocol = useCallback((proto) => {
+    setSelectedProtocols(prev =>
+      prev.includes(proto)
+        ? prev.filter(p => p !== proto)
+        : [...prev, proto]
+    );
+  }, []);
+
+  const clearProtocols = useCallback(() => setSelectedProtocols([]), []);
+
+
   return {
     ...filters,
     ...setters,
-    togglePathType
+    togglePathType,
+    toggleProtocol,
+    clearProtocols
   };
 }; 

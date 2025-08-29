@@ -73,7 +73,7 @@ const GraphControls = ({
         </button>
 
         <button
-          onClick={onDownloadSVG}
+          onClick={() => onDownloadSVG && onDownloadSVG(true)}
           title="Download as SVG"
           className="zoom-button download-svg"
           disabled={!canDownload}

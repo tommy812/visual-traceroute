@@ -2,8 +2,9 @@ import React from 'react';
 
 const AdvancedFilters = ({
   availableProtocols,
-  selectedProtocol,
-  setSelectedProtocol,
+  selectedProtocols,
+  toggleProtocol,
+  clearProtocols,
   selectedPathTypes,
   togglePathType,
   minRTT,
@@ -22,30 +23,80 @@ const AdvancedFilters = ({
         🔍 Advanced Filters
       </h3>
 
+      
+      {/* Protocols Multi-select */}
       <div style={{ marginBottom: "10px" }}>
-        <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
-          Probe Protocol:
+        <label style={{ fontSize: "12px", fontWeight: 500, color: "#666", display: "block", marginBottom: "6px" }}>
+          Probe Protocols:
         </label>
-        <select
-          value={selectedProtocol}
-          onChange={(e) => setSelectedProtocol(e.target.value)}
-          style={{
-            width: "100%",
-            padding: "4px 6px",
-            border: "1px solid #ccc",
-            borderRadius: "3px",
-            fontSize: "11px",
-            backgroundColor: "#fff",
-            boxSizing: "border-box"
-          }}
-        >
-          <option value="">All Protocols</option>
-          {availableProtocols.map(protocol => (
-            <option key={protocol} value={protocol}>
-              {protocol}
-            </option>
-          ))}
-        </select>
+        <div style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: "4px",
+          maxHeight: "110px",
+          overflowY: "auto",
+          border: "1px solid #ccc",
+          borderRadius: "4px",
+          padding: "6px",
+          background: "#fff"
+        }}>
+          {availableProtocols.length === 0 && (
+            <div style={{ fontSize: "11px", color: "#999" }}>No protocols</div>
+          )}
+          {availableProtocols.map(proto => {
+            const checked = selectedProtocols.includes(proto);
+            return (
+              <label key={proto} style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "11px",
+                cursor: "pointer",
+                padding: "2px 4px",
+                borderRadius: "3px",
+                background: checked ? "#e3f2fd" : "transparent"
+              }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggleProtocol(proto)}
+                  style={{ margin: 0, transform: "scale(0.85)" }}
+                />
+                <span style={{ flex: 1 }}>{proto}</span>
+              </label>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: "6px", display: "flex", gap: "6px" }}>
+          <button
+            type="button"
+            onClick={clearProtocols}
+            style={{
+              flex: 1,
+              padding: "4px 6px",
+              border: "1px solid #6c757d",
+              background: "#6c757d",
+              color: "#fff",
+              fontSize: "10px",
+              borderRadius: "3px",
+              cursor: "pointer"
+            }}
+            title="Clear protocol selection (show all)"
+          >
+            All
+          </button>
+          <span style={{
+            flex: 2,
+            fontSize: "10px",
+            color: "#555",
+            alignSelf: "center",
+            textAlign: "right"
+          }}>
+            {selectedProtocols.length === 0
+              ? 'All protocols'
+              : `${selectedProtocols.length} selected`}
+          </span>
+        </div>
       </div>
 
       <div style={{ marginBottom: "10px" }}>

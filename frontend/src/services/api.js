@@ -35,7 +35,20 @@ class ApiService {
 
   // Get unique destinations
   async getDestinations() {
-    return this.makeRequest('/destinations');
+    const res = await this.makeRequest('/destinations');
+    // Expect backend shape: { success:true, data: { <domain>: { domain_id, destinations:[{id,address}] } } }
+    const grouped = res?.data || {};
+    const flat = [];
+    Object.entries(grouped).forEach(([domain, obj]) => {
+      (obj?.destinations || []).forEach(d => {
+        flat.push({
+          id: d.id,
+            address: d.address,
+            domain
+        });
+      });
+    });
+    return { grouped, flat };
   }
 
   // Get trace runs with filtering
@@ -91,6 +104,7 @@ class ApiService {
   async healthCheck() {
     return this.makeRequest('/health');
   }
+  
 }
 
 const apiService = new ApiService();

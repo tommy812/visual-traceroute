@@ -1,0 +1,34 @@
+2a0a:8dc0:269::666
+google.com
+facebook.com
+linkedin.com
+youtube.com
+gov.uk
+www.harvard.edu
+www.hku.hk 
+www.ndhu.edu.tw 
+o2online.de 
+www.salesforce.com
+www.bcs.org
+cam.ac.uk
+t-mobile.cz
+
+
+2a0a:8dc0:269::666
+google.com
+facebook.com
+linkedin.com
+youtube.com
+gov.uk
+www.harvard.edu
+www.hku.hk university of hong kong
+www.ndhu.edu.tw National Dong Hwa University
+o2online.de 02 germany
+o2.co.uk ISSUE
+www.salesforce.com
+www.bcs.org
+cam.ac.uk
+t-mobile.cz
+
+
+

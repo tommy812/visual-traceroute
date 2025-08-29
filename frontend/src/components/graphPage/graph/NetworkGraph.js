@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import Graph from 'react-graph-vis';
-import ipGeoService from '../../services/ipGeoService';
+import ipGeoService from '../../../services/ipGeoService';
 import GraphControls from './GraphControls';
 
-import { useNetworkGraphModel } from '../../hooks/useNetworkGraphModel';
-import { useGraphData } from '../../hooks/useGraphData';
-import { usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../hooks';
+
+import { useNetworkGraphModel } from '../../../hooks/useNetworkGraphModel';
+import { useGraphData } from '../../../hooks/useGraphData';
+import { usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
 
 
 // Error Boundary for NetworkGraph
@@ -78,7 +79,7 @@ const NetworkGraph = React.memo(({
   maxRTT = '',
   minUsagePercent = '',
   selectedPathTypes = ['PRIMARY', 'ALTERNATIVE'],
-  selectedProtocol = ''
+  selectedProtocols = []
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
@@ -93,7 +94,7 @@ const NetworkGraph = React.memo(({
     minUsagePercent,
     selectedPathTypes,
     showPrimaryOnly,
-    selectedProtocol
+    selectedProtocols
   });
 
 
@@ -129,7 +130,9 @@ const NetworkGraph = React.memo(({
       maxRTT,
       minUsagePercent,
       selectedPathTypes.sort().join(','),
-      selectedProtocol || '',           // ADD: ensure remount on protocol change
+      (selectedProtocols && selectedProtocols.length
+       ? selectedProtocols.slice().sort().join(',')
+       : 'ALL'),          
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
@@ -137,7 +140,7 @@ const NetworkGraph = React.memo(({
       showPrefixAggregation.toString()
     ];
     return keyParts.join('|');
-  }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocol, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
+ }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
 
 
 
@@ -440,7 +443,7 @@ const NetworkGraph = React.memo(({
     },
     hoverNode: function () {},
     hoverEdge: function () {}
-  }), [graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, graphKey]);
+  }), [graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect]);
 
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
@@ -452,6 +455,7 @@ const NetworkGraph = React.memo(({
 
   const { downloadAsPNG, downloadAsSVG } = useGraphExport({ networkInstance, graphContainerRef, graph });
 
+  
 
   return (
     <div style={containerStyle} ref={graphContainerRef}>
@@ -472,7 +476,7 @@ const NetworkGraph = React.memo(({
         onZoomOut={handleZoomOut}
         onFit={handleResetZoom}
         onDownloadPNG={downloadAsPNG}
-        onDownloadSVG={downloadAsSVG}
+        onDownloadSVG={downloadAsSVG} 
         canDownload={!!networkInstance}
         showPrefixAggregation={showPrefixAggregation}
         onTogglePrefixAggregation={handlePrefixAggregationToggle}

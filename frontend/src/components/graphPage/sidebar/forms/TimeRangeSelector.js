@@ -1,6 +1,6 @@
 import React from 'react';
-import { toLocalInputValue, fromLocalInputValue } from '../../../utils/dateUtils';
-import { QUICK_ACCESS_OPTIONS } from '../../../constants/quickAccessOptions';
+import { toLocalInputValue, fromLocalInputValue } from '../../../../utils/dateUtils';
+import { QUICK_ACCESS_OPTIONS } from '../../../../constants/quickAccessOptions';
 
 const TimeRangeSelector = ({ dateRange, currentPeriod, onQuickAccess }) => (
   <div style={{ padding: '15px', backgroundColor: '#fff', borderBottom: '1px solid #dee2e6' }}>
