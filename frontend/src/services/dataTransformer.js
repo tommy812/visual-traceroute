@@ -84,7 +84,7 @@ class DataTransformer {
       };
     });
   }
-  
+
 
 
   /**
@@ -97,7 +97,7 @@ class DataTransformer {
     // Group paths by similarity to identify primary vs alternatives
     const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(paths);
 
-     // Group by protocol
+    // Group by protocol
     const byProtocol = paths.reduce((acc, p) => {
       const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
       (acc[key] ||= []).push(p);

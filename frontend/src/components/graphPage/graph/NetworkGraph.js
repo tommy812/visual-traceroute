@@ -154,8 +154,8 @@ const NetworkGraph = React.memo(({
   });
 
 
-  const { highlightedGraph, highlightedPaths, highlightPath, clearHighlight } =
-    usePathHighlighting({ graph, pathMapping });
+  const { highlightedGraph, highlightedPaths, highlightPath, highlightPathById, highlightPathsForNode, clearHighlight } =
+    usePathHighlighting({ graph, pathMapping, nodeDetails });
 
 
 
@@ -424,7 +424,13 @@ const NetworkGraph = React.memo(({
 
         if (nodeData && Array.isArray(nodeData)) {
           handleHopSelection(nodeData);
-          highlightPath(nodeId, 'node');
+          const set = pathMapping.get(nodeId);
+          if (set && set.size) {
+            // NEW: highlight all paths through this node (most used = solid)
+            highlightPathsForNode(nodeId);
+          } else {
+            clearHighlight();
+          }
         }
       } else if (edges.length > 0) {
         const edgeId = edges[0]; // string id (edge_x)
@@ -443,8 +449,7 @@ const NetworkGraph = React.memo(({
     },
     hoverNode: function () {},
     hoverEdge: function () {}
-  }), [graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect]);
-
+  }), [graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode]);
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
     networkRef.current = network;

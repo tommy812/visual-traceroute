@@ -121,11 +121,13 @@ export function buildGraph({
         const h = hops[i];
         if (h && !h.is_timeout && h.ip) { lastRealIdx = i; break; }
       }
-      const reachedDestination =
+      const matchesExpected =
         lastRealIdx >= 0 &&
         !!expectedDestIp &&
         hops[lastRealIdx]?.ip === expectedDestIp;
-
+      
+      const isTerminalHop = (idx, iHop) =>
+        idx === lastRealIdx && (!expectedDestIp || matchesExpected);
 
       // Collect details keyed by the final rendering key
       hops.forEach((hop, idx) => {
@@ -136,7 +138,6 @@ export function buildGraph({
         } else {
           if (showPrefixAggregation) {
             const prefix = dataTransformer.getNetworkPrefix(hop.ip);
-            // collapsed when the prefix is not expanded
             const collapsed = !expandedPrefixes?.has(prefix);
             if (collapsed) {
               key = `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
@@ -160,10 +161,7 @@ export function buildGraph({
           timestamp: pathObj?.timeStamp ?? null,
           pathTimestamps: Array.isArray(pathObj?.timestamps) ? pathObj.timestamps : [],
           protocol: pathObj?.protocol ?? (hop?.protocol ?? null),
-
-          destinationReached: (idx === lastRealIdx) && reachedDestination,
-
-
+          destinationReached: isTerminalHop(idx, hop),
           pathPercent: pathObj?.percent ?? null,
           pathAvgRtt: pathObj?.avg_rtt ?? null,
           pathCount: pathObj?.count ?? null,
@@ -219,6 +217,8 @@ export function buildGraph({
     if (type === 'timeout') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
+        // ADD: map all paths traversing this timeout hop
+        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
         const isMaxTtl = hopNumber === 30;
         return {
           id,
@@ -239,10 +239,9 @@ export function buildGraph({
     } else if (type === 'ip') {
       const display = list[0]?.hostname || value;
       const isTerminal = list.some(d => d.destinationReached);
-
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`)); // ensure mapping
         return {
           id,
           label: display,
@@ -260,25 +259,30 @@ export function buildGraph({
         };
       });
     } else {
-      // prefix (collapsed). Click toggles expansion, drawer not used.
-      const label = value;
-      addNodeOnce(key, (id) => ({
-        id,
-        label,
-        title: `Network Prefix: ${value}\nHop #${hopNumber} • ${dest}\nClick to expand`,
-        color: { background: '#FF9800', border: '#F57C00' },
-        font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
-        shape: 'box',
-        size: 20,
-        nodeType: 'prefix',
-        prefix: value,
-        level: hopNumber,
-        y,
-        physics: false,
-        fixed: { x: false, y: true }
-      }));
+      // prefix node
+      addNodeOnce(key, (id) => {
+        nodeDetails.set(id, list);
+        // ADD: map all underlying paths for collapsed prefix
+        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+        const label = value; // Use the prefix value as the label
+        return {
+          id,
+          label,
+          title: `Network Prefix: ${value}\nHop #${hopNumber} • ${dest}\nClick to expand`,
+          color: { background: '#FF9800', border: '#F57C00' },
+          font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
+          shape: 'box',
+          size: 20,
+          nodeType: 'prefix',
+          prefix: value,
+          level: hopNumber,
+          y,
+          physics: false,
+          fixed: { x: false, y: true }
+        };
+      });
     }
-  });
+});
 
   // Pass 3: build edges per path using the same keys we used for nodes
   const edgeUsage = new Map(); // key -> { destinations:Set, colors:[], paths:Set }
