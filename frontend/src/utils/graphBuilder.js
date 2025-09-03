@@ -567,7 +567,18 @@ export function buildGraph({
     const from = parseInt(fromStr, 10);
     const to = parseInt(toStr, 10);
     const colors = [...new Set(usage.colors)];
-    const title = `Used by: ${Array.from(usage.destinations).join(', ')}\nPaths: ${usage.paths.size}`;
+    const destinationLines = Array.from(usage.destinations).map(d => {
+      const dom =
+        filteredData?.[d]?.domain?.name ||
+        filteredData?.[d]?.domain_name ||
+        filteredData?.[d]?.domainName ||
+        '';
+      return dom ? `${d} (${dom})` : d;
+    });
+    const destinationsBlock = destinationLines.length
+      ? `Destinations:\n${destinationLines.join('\n')}\n`
+      : '';
+    const title = `${destinationsBlock}Paths: ${usage.paths.size}`;
 
     const straightLineStyle = { type: 'continuous', roundness: 0.0, forceDirection: 'horizontal' };
     const normalCurveStyle = { type: 'continuous', roundness: 0.4, forceDirection: 'horizontal' };
@@ -583,7 +594,8 @@ export function buildGraph({
         smooth: isAggregated ? straightLineStyle : normalCurveStyle,
         dashes: false,
         arrowStrikethrough: false,
-        title,
+        title,                        // <-- updated
+        destinations: destinationLines, // optional extra data
         paths: Array.from(usage.paths)
       });
       usage.paths.forEach(pid => {
@@ -602,7 +614,8 @@ export function buildGraph({
           smooth: isAggregated ? straightLineStyle : curvedForIndex(idx, colors.length),
           dashes: false,
           arrowStrikethrough: false,
-          title,
+          title,                        // <-- updated
+          destinations: destinationLines,
           paths: Array.from(usage.paths)
         });
         usage.paths.forEach(pid => {

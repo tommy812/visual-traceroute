@@ -94,8 +94,8 @@ const GraphControls = ({
       {highlightedPaths.length > 0 && (
         <div style={{
           position: "absolute",
-          top: "10px",
-          right: "10px",
+          bottom: "10px",
+          left: "200px",
           background: "rgba(255, 255, 255, 0.95)",
           padding: "10px 15px",
           borderRadius: "6px",

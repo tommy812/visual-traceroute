@@ -505,12 +505,80 @@ const NetworkGraph = React.memo(({
     },
     hoverNode: function () {},
     hoverEdge: function () {}
-  }), [graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode]);
+  }), [handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode]);
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
     networkRef.current = network;
     setNetworkInstance(network);
   }, []);
+
+  // After networkInstance is set, apply highlight changes directly:
+useEffect(() => {
+  if (!networkInstance) return;
+  if (!highlightedGraph || !graph) return;
+  if (highlightedGraph === graph) return; // no highlighting active
+
+  const nodesDS = networkInstance.body.data.nodes;
+  const edgesDS = networkInstance.body.data.edges;
+
+  const changedNodes = [];
+  const changedEdges = [];
+
+  // Helper comparators (only compare few styling fields)
+  const nodeChanged = (curr, next) => {
+    return (
+      curr.color?.background !== next.color?.background ||
+      curr.color?.border !== next.color?.border ||
+      curr.opacity !== next.opacity ||
+      curr.borderWidth !== next.borderWidth
+    );
+  };
+
+  const edgeChanged = (curr, next) => {
+    return (
+      curr.color !== next.color &&
+      curr.color?.color !== next.color?.color ||
+      curr.color?.opacity !== next.color?.opacity ||
+      curr.width !== next.width ||
+      JSON.stringify(curr.dashes) !== JSON.stringify(next.dashes)
+    );
+  };
+
+  let raf = requestAnimationFrame(() => {
+    // Diff nodes
+    for (const n of highlightedGraph.nodes) {
+      const current = nodesDS.get(n.id);
+      if (!current) continue;
+      if (nodeChanged(current, n)) {
+        changedNodes.push({
+          id: n.id,
+          color: n.color,
+          opacity: n.opacity,
+          borderWidth: n.borderWidth,
+          font: n.font // keep label styling sync
+        });
+      }
+    }
+    // Diff edges
+    for (const e of highlightedGraph.edges) {
+      const current = edgesDS.get(e.id);
+      if (!current) continue;
+      if (edgeChanged(current, e)) {
+        changedEdges.push({
+          id: e.id,
+          color: e.color,
+          width: e.width,
+          dashes: e.dashes
+        });
+      }
+    }
+
+    if (changedNodes.length) nodesDS.update(changedNodes);
+    if (changedEdges.length) edgesDS.update(changedEdges);
+  });
+
+  return () => cancelAnimationFrame(raf);
+}, [highlightedGraph, networkInstance, graph]);
 
 
 
@@ -523,7 +591,7 @@ const NetworkGraph = React.memo(({
       <GraphErrorBoundary>
         <Graph
           key={graphKey}
-          graph={highlightedGraph}
+          graph={graph}
           options={options}
           events={events}
           getNetwork={getNetwork}
