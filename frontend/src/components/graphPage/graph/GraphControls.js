@@ -15,10 +15,18 @@ const GraphControls = ({
   onDownloadSVG,
   canDownload = true,
 
-  // prefix aggregation
+  // aggregation controls
+  aggregationMode,
+  onAggregationModeChange,
+  aggregationScope,
+  onAggregationScopeChange,
   showPrefixAggregation,
   onTogglePrefixAggregation,
   expandedCount = 0,
+  
+  // network hierarchy controls
+  networkHierarchy = 'none',
+  onNetworkHierarchyChange,
 
   // highlighting (moved from NetworkGraph)
   highlightedPaths = [],
@@ -203,22 +211,93 @@ const GraphControls = ({
           🌐 Network View
         </label>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: isFullscreen ? '12px' : '11px', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={showPrefixAggregation}
-              onChange={onTogglePrefixAggregation}
-              style={{ margin: 0, cursor: 'pointer' }}
-            />
-            Prefix & Timeout Aggregation
-          </label>
+          {/* Path Aggregation */}
+          <div style={{ fontSize: isFullscreen ? '11px' : '10px', fontWeight: 'bold', color: '#555' }}>
+            Path Aggregation:
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
+            {['none', 'shared-ips', 'asn'].map(mode => (
+              <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="aggregationMode"
+                  value={mode}
+                  checked={aggregationMode === mode}
+                  onChange={(e) => onAggregationModeChange(e.target.value)}
+                  style={{ margin: 0, cursor: 'pointer' }}
+                />
+                {mode === 'none' ? '📊 Show All Paths' : 
+                 mode === 'shared-ips' ? '🔗 Shared IPs' : '🏢 ASN'}
+              </label>
+            ))}
+          </div>
+          
+          {/* Network Hierarchy */}
+          <div style={{ fontSize: isFullscreen ? '11px' : '10px', fontWeight: 'bold', color: '#555', marginTop: '8px' }}>
+            Network Hierarchy:
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
+            {['none', 'subnet', 'isp-pop', 'isp'].map(hierarchy => (
+              <label key={hierarchy} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="networkHierarchy"
+                  value={hierarchy}
+                  checked={networkHierarchy === hierarchy}
+                  onChange={(e) => onNetworkHierarchyChange(e.target.value)}
+                  style={{ margin: 0, cursor: 'pointer' }}
+                />
+                {hierarchy === 'none' ? '🔸 Individual IPs' : 
+                 hierarchy === 'subnet' ? '🌐 Subnets (/64)' :
+                 hierarchy === 'isp-pop' ? '🏢 ISP POP (/48)' : '🌍 ISP (/32)'}
+              </label>
+            ))}
+          </div>
+          
+          {/* Aggregation Scope - show for modes that support it */}
+          {(networkHierarchy !== 'none' || aggregationMode === 'asn') && (
+            <>
+              <div style={{ fontSize: isFullscreen ? '11px' : '10px', fontWeight: 'bold', color: '#555', marginTop: '8px' }}>
+                Scope:
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
+                {['per-destination', 'cross-destination'].map(scope => (
+                  <label key={scope} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="aggregationScope"
+                      value={scope}
+                      checked={aggregationScope === scope}
+                      onChange={(e) => onAggregationScopeChange(e.target.value)}
+                      style={{ margin: 0, cursor: 'pointer' }}
+                    />
+                    {scope === 'per-destination' ? '📍 Per Destination' : '🌍 All Destinations'}
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+          
+          {/* Prefix aggregation toggle - show when network hierarchy is selected */}
+          {networkHierarchy !== 'none' && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee' }}>
+              <input
+                type="checkbox"
+                checked={showPrefixAggregation}
+                onChange={onTogglePrefixAggregation}
+                style={{ margin: 0, cursor: 'pointer' }}
+              />
+              Enable Prefix Grouping
+            </label>
+          )}
+          
           {showPrefixAggregation && expandedCount > 0 && (
-            <div style={{ fontSize: isFullscreen ? '11px' : '10px', color: '#666', marginLeft: '24px' }}>
+            <div style={{ fontSize: isFullscreen ? '10px' : '9px', color: '#666', marginLeft: '24px' }}>
               Expanded: {expandedCount} group(s)
             </div>
           )}
-          {showPrefixAggregation && (
-            <div style={{ fontSize: isFullscreen ? '10px' : '9px', color: '#888', marginLeft: '24px', fontStyle: 'italic' }}>
+          {(networkHierarchy !== 'none' || aggregationMode === 'asn') && (
+            <div style={{ fontSize: isFullscreen ? '9px' : '8px', color: '#888', marginLeft: '8px', fontStyle: 'italic' }}>
               Click grouped nodes to expand/collapse
             </div>
           )}

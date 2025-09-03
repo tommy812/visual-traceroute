@@ -47,8 +47,53 @@ export function computeAlignedLevels(filteredData) {
 }
 
 export function computeDestinationLanes(filteredData) {
-  const destinations = Object.keys(filteredData || {}).sort();
-  const laneByDest = new Map(destinations.map((d, i) => [d, i]));
+  const destinations = Object.keys(filteredData || {});
+  
+  // If only one destination, use simple ordering
+  if (destinations.length <= 1) {
+    const laneByDest = new Map(destinations.map((d, i) => [d, i]));
+    return { laneByDest, laneCount: destinations.length };
+  }
+  
+  // For multiple destinations, order by network similarity to minimize crossings
+  const destinationPaths = destinations.map(dest => {
+    const destData = filteredData[dest];
+    // Get the primary path or first available path
+    const path = destData?.primary_path?.path || destData?.alternatives?.[0]?.path || [];
+    return { dest, path };
+  });
+  
+  // Sort destinations by path similarity to minimize crossings
+  destinationPaths.sort((a, b) => {
+    // Extract all IPs from both paths
+    const aIps = a.path.map(h => h?.ip).filter(ip => ip && ip !== 'null');
+    const bIps = b.path.map(h => h?.ip).filter(ip => ip && ip !== 'null');
+    
+    // Calculate similarity score based on common nodes
+    const commonIps = aIps.filter(ip => bIps.includes(ip));
+    const totalIps = new Set([...aIps, ...bIps]).size;
+    const similarityScore = totalIps > 0 ? commonIps.length / totalIps : 0;
+    
+    // Higher similarity should come first (descending order)
+    if (similarityScore !== 0) {
+      return -similarityScore; // Negative for descending order
+    }
+    
+    // If no common IPs, compare by first few hops
+    for (let i = 0; i < Math.min(3, a.path.length, b.path.length); i++) {
+      const aIp = a.path[i]?.ip || '';
+      const bIp = b.path[i]?.ip || '';
+      if (aIp !== bIp) {
+        return aIp.localeCompare(bIp);
+      }
+    }
+    
+    // If still tied, sort by destination
+    return a.dest.localeCompare(b.dest);
+  });
+  
+  const orderedDestinations = destinationPaths.map(d => d.dest);
+  const laneByDest = new Map(orderedDestinations.map((d, i) => [d, i]));
   return { laneByDest, laneCount: destinations.length };
 }
 

@@ -85,6 +85,14 @@ const NetworkGraph = React.memo(({
   const [networkInstance, setNetworkInstance] = useState(null);
   const [expandedPrefixes, setExpandedPrefixes] = useState(new Set()); // Track expanded prefix groups
   const [showPrefixAggregation, setShowPrefixAggregation] = useState(false); // Toggle prefix aggregation
+  
+  // New aggregation controls
+  const [aggregationMode, setAggregationMode] = useState('none'); // 'none', 'shared-ips', 'asn'
+  const [aggregationScope, setAggregationScope] = useState('cross-destination'); // 'per-destination', 'cross-destination'
+  const [expandedAsnGroups, setExpandedAsnGroups] = useState(new Set()); // Track expanded ASN groups
+  
+  // Network hierarchy controls (separate from path aggregation)
+  const [networkHierarchy, setNetworkHierarchy] = useState('none'); // 'none', 'subnet', 'isp-pop', 'isp'
   const graphContainerRef = useRef(null); // Ref for capturing the graph
   const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
   const networkRef = useRef(null);
@@ -119,6 +127,45 @@ const NetworkGraph = React.memo(({
     setExpandedPrefixes(new Set()); // Reset expanded prefixes when toggling
   }, []);
 
+  // Handle aggregation mode changes
+  const handleAggregationModeChange = useCallback((mode) => {
+    setAggregationMode(mode);
+    // Reset expanded groups when changing mode
+    setExpandedPrefixes(new Set());
+    setExpandedAsnGroups(new Set());
+    // Auto-enable prefix aggregation when switching to prefix mode
+    if (mode === 'prefix') {
+      setShowPrefixAggregation(true);
+    } else if (mode === 'none') {
+      setShowPrefixAggregation(false);
+    }
+  }, []);
+
+  // Handle aggregation scope changes
+  const handleAggregationScopeChange = useCallback((scope) => {
+    setAggregationScope(scope);
+  }, []);
+
+  // Handle network hierarchy changes
+  const handleNetworkHierarchyChange = useCallback((hierarchy) => {
+    setNetworkHierarchy(hierarchy);
+    // Reset expanded prefixes when changing hierarchy
+    setExpandedPrefixes(new Set());
+  }, []);
+
+  // Handle ASN group toggle
+  const handleAsnToggle = useCallback((asnGroup) => {
+    setExpandedAsnGroups(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(asnGroup)) {
+        newSet.delete(asnGroup);
+      } else {
+        newSet.add(asnGroup);
+      }
+      return newSet;
+    });
+  }, []);
+
   // Create a stable key for the graph to force re-creation when needed
   const graphKey = useMemo(() => {
     const keyParts = [
@@ -137,10 +184,14 @@ const NetworkGraph = React.memo(({
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
       Array.from(expandedPrefixes).sort().join(','),
-      showPrefixAggregation.toString()
+      showPrefixAggregation.toString(),
+      aggregationMode,
+      aggregationScope,
+      networkHierarchy,
+      Array.from(expandedAsnGroups).sort().join(',')
     ];
     return keyParts.join('|');
- }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation]);
+ }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups]);
 
 
 
@@ -150,7 +201,11 @@ const NetworkGraph = React.memo(({
     dateRange,
     showPrimaryOnly,
     showPrefixAggregation,
-    expandedPrefixes
+    expandedPrefixes,
+    aggregationMode,
+    aggregationScope,
+    networkHierarchy,
+    expandedAsnGroups
   });
 
 
@@ -390,6 +445,7 @@ const NetworkGraph = React.memo(({
         // Handle expand/collapse nodes
         if (node?.nodeType === 'prefix') { handlePrefixToggle(node.prefix); return; }
         if (node?.nodeType === 'timeout_group') { handlePrefixToggle(node.timeoutGroup); return; }
+        if (node?.nodeType === 'asn') { handleAsnToggle(node.asnGroup); return; }
 
         // Try getting precomputed details
         let nodeData = nodeDetails.get(nodeId);
@@ -483,9 +539,17 @@ const NetworkGraph = React.memo(({
         onDownloadPNG={downloadAsPNG}
         onDownloadSVG={downloadAsSVG} 
         canDownload={!!networkInstance}
+        // Aggregation controls
+        aggregationMode={aggregationMode}
+        onAggregationModeChange={handleAggregationModeChange}
+        aggregationScope={aggregationScope}
+        onAggregationScopeChange={handleAggregationScopeChange}
         showPrefixAggregation={showPrefixAggregation}
         onTogglePrefixAggregation={handlePrefixAggregationToggle}
-        expandedCount={expandedPrefixes.size}
+        expandedCount={expandedPrefixes.size + expandedAsnGroups.size}
+        // Network hierarchy controls
+        networkHierarchy={networkHierarchy}
+        onNetworkHierarchyChange={handleNetworkHierarchyChange}
         highlightedPaths={highlightedPaths}      // added
         onClearHighlight={clearHighlight}        // added
       />

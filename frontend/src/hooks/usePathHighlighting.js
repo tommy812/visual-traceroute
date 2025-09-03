@@ -21,6 +21,8 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
     return { nodes, edges };
   }, [graph, pathMapping]);
 
+
+
   const highlightPathById = useCallback((pathId) => {
     if (!graph || !pathMapping || !pathId) return;
     const [destination, pathTypeRaw] = pathId.split('-', 2);
@@ -39,47 +41,92 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
 
   const highlightPathsForNode = useCallback((nodeId) => {
     if (!graph || !pathMapping) return;
-    const paths = pathMapping.get(nodeId);
-    if (!paths || paths.size === 0) return;
+    
+    // Get all paths that pass through the selected node
+    const passingPaths = pathMapping.get(nodeId);
+    if (!passingPaths || passingPaths.size === 0) return;
 
     const details = nodeDetails?.get(nodeId) || [];
-    const usageByPath = new Map();
+    
+    // Build usage statistics for each path
+    const pathStats = new Map();
     details.forEach(d => {
       const pid = `${d.destination}-${d.pathType}`;
-      if (d.pathPercent != null) {
-        usageByPath.set(pid, Math.max(usageByPath.get(pid) ?? -Infinity, d.pathPercent));
+      if (!pathStats.has(pid)) {
+        pathStats.set(pid, {
+          pathPercent: d.pathPercent || 0,
+          pathCount: d.pathCount || 0,
+          totalTraces: d.totalTraces || 0,
+          pathType: d.pathType,
+          destination: d.destination,
+          isPrimary: d.pathType === 'PRIMARY'
+        });
+      } else {
+        // Update with highest values found
+        const existing = pathStats.get(pid);
+        existing.pathPercent = Math.max(existing.pathPercent, d.pathPercent || 0);
+        existing.pathCount = Math.max(existing.pathCount, d.pathCount || 0);
+        existing.totalTraces = Math.max(existing.totalTraces, d.totalTraces || 0);
       }
     });
 
-    // Determine most used (highest percent) fallback to PRIMARY then first
-    let best = null;
-    let bestVal = -Infinity;
-    usageByPath.forEach((v, k) => {
-      if (v > bestVal) { bestVal = v; best = k; }
+    // Determine most used path based on usage percentage, then count, then primary status
+    let mostUsedPathId = null;
+    let bestScore = -1;
+    
+    pathStats.forEach((stats, pid) => {
+      // Score based on percentage (primary), count (secondary), isPrimary (tertiary)
+      const score = (stats.pathPercent * 10000) + (stats.pathCount * 10) + (stats.isPrimary ? 1 : 0);
+      if (score > bestScore) {
+        bestScore = score;
+        mostUsedPathId = pid;
+      }
     });
-    if (!best) {
-      best = Array.from(paths).find(p => p.endsWith('-PRIMARY')) || Array.from(paths)[0];
+
+    // Fallback selection if no stats available
+    if (!mostUsedPathId) {
+      mostUsedPathId = Array.from(passingPaths).find(p => p.endsWith('-PRIMARY')) || Array.from(passingPaths)[0];
     }
 
+    // Create highlight entries for each complete path using the working collectForPathId
     let colorIdx = 0;
-    const result = Array.from(paths).map(pid => {
-      const { nodes, edges } = collectForPathId(pid);
-      const solid = pid === best;
+    const result = Array.from(passingPaths).map(pathId => {
+      const { nodes, edges } = collectForPathId(pathId);
+      
+      const stats = pathStats.get(pathId);
+      const isMostUsed = pathId === mostUsedPathId;
       const color = pathHighlightColors[colorIdx % pathHighlightColors.length];
+      
       const entry = {
-        id: pid,
-        destination: pid.split('-', 2)[0],
-        pathType: pid.split('-', 2)[1] || 'UNKNOWN',
-        isPrimary: solid,
+        id: pathId,
+        destination: pathId.split('-')[0] || 'Unknown',
+        pathType: pathId.split('-')[1] || 'UNKNOWN',
+        isPrimary: isMostUsed,
+        isSecondary: !isMostUsed,
         nodes,
         edges,
-        highlightColor: solid ? color : adjustColorIntensity(color, 0.6),
-        lineStyle: solid ? 'solid' : 'dashed'
+        highlightColor: color, // Use full color for all paths for better visibility
+        lineStyle: isMostUsed ? 'solid' : 'dotted',
+        pathPercent: stats?.pathPercent || 0,
+        pathCount: stats?.pathCount || 0,
+        usageStats: stats
       };
       colorIdx++;
       return entry;
     });
 
+    // Sort results with most used first
+    result.sort((a, b) => {
+      if (a.isPrimary && !b.isPrimary) return -1;
+      if (!a.isPrimary && b.isPrimary) return 1;
+      return (b.pathPercent || 0) - (a.pathPercent || 0);
+    });
+
+    // Debug: log the final result
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Final highlighted paths:', result.map(r => `${r.id} (primary: ${r.isPrimary}, edges: ${r.edges.length})`));
+    }
+    
     setHighlightedPaths(result);
   }, [graph, pathMapping, nodeDetails, collectForPathId]);
 
@@ -104,20 +151,85 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
 
   const highlightedGraph = useMemo(() => {
     if (!graph || highlightedPaths.length === 0) return graph;
+    
+    // Create enhanced node highlighting
     const nodes = graph.nodes.map(n => {
-      const active = highlightedPaths.some(p => p.nodes.includes(n.id));
-      return active
-        ? { ...n, color: { ...n.color, background: '#ffd166', border: '#333' }, font: { ...n.font } }
-        : { ...n, color: { ...n.color, background: '#E0E0E0', border: '#CCCCCC' }, opacity: 0.3 };
-    });
-    const edges = graph.edges.map(e => {
-      const hits = highlightedPaths.filter(p => p.edges.some(ed => ed.from === e.from && ed.to === e.to));
-      if (hits.length) {
-        const anyDashed = hits.some(h => h.lineStyle === 'dashed');
-        return { ...e, color: { ...e.color, opacity: 1 }, width: anyDashed ? 2 : 3, dashes: anyDashed ? [5,5] : false };
+      const activeInPaths = highlightedPaths.filter(p => p.nodes.includes(n.id));
+      if (activeInPaths.length > 0) {
+        // Node is part of highlighted paths
+        const isPrimaryPath = activeInPaths.some(p => p.isPrimary);
+        return { 
+          ...n, 
+          color: { 
+            ...n.color, 
+            background: isPrimaryPath ? '#FFD700' : '#FFA500', // Gold for primary, orange for secondary
+            border: '#333' 
+          }, 
+          font: { ...n.font, color: '#000', strokeWidth: 2, strokeColor: '#fff' },
+          borderWidth: isPrimaryPath ? 3 : 2
+        };
+      } else {
+        // Node is not part of highlighted paths - fade it
+        return { 
+          ...n, 
+          color: { ...n.color, background: '#E0E0E0', border: '#CCCCCC' }, 
+          opacity: 0.3 
+        };
       }
-      return { ...e, color: { ...e.color, opacity: 0.25 } };
     });
+    
+    // Create enhanced edge highlighting with proper line styles
+    let highlightedEdgeCount = 0;
+    const edges = graph.edges.map(e => {
+      const matchingPaths = highlightedPaths.filter(p => 
+        p.edges.some(ed => ed.from === e.from && ed.to === e.to)
+      );
+      
+      if (matchingPaths.length > 0) {
+        highlightedEdgeCount++;
+        
+        // Edge is part of highlighted paths
+        const primaryPath = matchingPaths.find(p => p.isPrimary);
+        const secondaryPaths = matchingPaths.filter(p => !p.isPrimary);
+        
+        // Debug: log what we found
+        if (process.env.NODE_ENV === 'development' && e.id === 'edge_51') {
+          console.log(`Edge ${e.id}: primary=${!!primaryPath}, secondary=${secondaryPaths.length}, paths:`, matchingPaths.map(p => `${p.id}(primary:${p.isPrimary})`));
+        }
+        
+        if (primaryPath) {
+          // Primary path gets solid line
+          return { 
+            ...e, 
+            color: primaryPath.highlightColor, // Direct color value
+            width: 3,
+            dashes: false, // Solid line
+            smooth: e.smooth // Preserve original smoothing
+          };
+        } else if (secondaryPaths.length > 0) {
+          // Secondary paths get dotted lines
+          const path = secondaryPaths[0]; // Use first secondary path color
+          return { 
+            ...e, 
+            color: path.highlightColor, // Direct color value
+            width: 2,
+            dashes: [5, 5], // More visible dotted line pattern
+            smooth: e.smooth // Preserve original smoothing
+          };
+        }
+      }
+      
+      // Edge is not part of highlighted paths - fade it
+      return { 
+        ...e, 
+        color: { 
+          color: e.color?.color || '#999999',
+          opacity: 0.2 
+        },
+        width: 1
+      };
+    });
+    
     return { nodes, edges };
   }, [graph, highlightedPaths]);
 

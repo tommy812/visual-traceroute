@@ -3,40 +3,63 @@ import { generateDestinationColor } from './colorUtils';
 import { curvedForIndex } from './edges';
 import { computeDestinationLanes } from './graphLayoutUtils';
 
-// Build a simple, deterministic graph:
-// - level = hop number (strict columns)
-// - one node per destination per hop (prevents contention across paths)
-// - lane = destination lane (keeps each path on its row)
+// Map hierarchy → IPv6 mask
+const HIERARCHY_MASKS_V6 = {
+  subnet: 64,   // /64
+  'isp-pop': 48, // /48
+  isp: 32       // /32
+};
+
+/**
+ * Build a deterministic graph with optional IPv6 hierarchy aggregation.
+ * Supports:
+ *  - Aggregation by shared IPs
+ *  - Aggregation by hierarchical IPv6 prefixes (/64 subnet, /48 ISP-PoP, /32 ISP)
+ *  - Per-destination vs cross-destination scopes
+ *  - Correct handling of timeout nodes at the right hop
+ *
+ * Assumptions:
+ *  - Only IPv6 is used (no IPv4 branches)
+ */
 export function buildGraph({
   filteredData,
   selectedDestinations,
   showPrimaryOnly,
   showPrefixAggregation,
-  expandedPrefixes
+  expandedPrefixes,
+  aggregationMode = 'none',                 // 'none' | 'shared-ips' | 'asn' | 'prefix'
+  aggregationScope = 'per-destination',     // 'per-destination' | 'cross-destination'
+  networkHierarchy = 'none',                // 'none' | 'subnet' (/64) | 'isp-pop' (/48) | 'isp' (/32)
+  expandedAsnGroups = new Set()
 }) {
   const nodes = [];
   const edges = [];
   const nodeDetails = new Map();
   const pathMapping = new Map();
+  const addedNodeIds = new Set(); // Track which node IDs we've already added
 
   // Early exit
   if (!filteredData || Object.keys(filteredData).length === 0) {
     return { graph: { nodes, edges }, nodeDetails, pathMapping };
   }
 
-  // Stable id map
+  // Stable id map - include aggregation mode/scope in mapping to ensure complete separation
   const nodeIdMap = new Map();
   let nextId = 1;
   const getOrCreateNodeId = (key) => {
-    if (nodeIdMap.has(key)) return nodeIdMap.get(key);
+    const fullKey = `${aggregationMode}:${aggregationScope}:${key}`;
+    if (nodeIdMap.has(fullKey)) return nodeIdMap.get(fullKey);
     const id = nextId++;
-    nodeIdMap.set(key, id);
+    nodeIdMap.set(fullKey, id);
     return id;
   };
 
   const addNodeOnce = (key, factory) => {
     const id = getOrCreateNodeId(key);
-    if (!nodes.some(n => n.id === id)) nodes.push(factory(id));
+    if (!addedNodeIds.has(id)) {
+      nodes.push(factory(id));
+      addedNodeIds.add(id);
+    }
     return id;
   };
 
@@ -49,46 +72,66 @@ export function buildGraph({
   const { laneByDest } = computeDestinationLanes(filteredData);
   const rowHeight = 80;
 
-// Order destinations by lane index and compute a level offset per destination
- const orderedDestinations = Array.from(laneByDest.entries())
-   .sort((a, b) => a[1] - b[1])
-   .map(([d]) => d);
- const rowOffsetByDest = new Map();
- {
-   let cumulativeLevel = 0;
-   orderedDestinations.forEach(dest => {
-     const dp = filteredData[dest];
-     const lengths = [];
-     if (dp?.includePrimary !== false && Array.isArray(dp?.primary_path?.path)) {
-       lengths.push(dp.primary_path.path.length);
-     }
-     (Array.isArray(dp?.alternatives) ? dp.alternatives : []).forEach(alt => {
-       lengths.push(Array.isArray(alt?.path) ? alt.path.length : 0);
-     });
-     const maxLen = lengths.length ? Math.max(...lengths) : 0;
-     rowOffsetByDest.set(dest, cumulativeLevel);
-     cumulativeLevel += maxLen + 10; // +1 gap between destinations
-   });
- }
+  // Order destinations by lane index and compute a level offset per destination
+  const orderedDestinations = Array.from(laneByDest.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([d]) => d);
 
+  const rowOffsetByDest = new Map();
+  {
+    let cumulativeLevel = 0;
+    orderedDestinations.forEach(dest => {
+      const dp = filteredData[dest];
+      const lengths = [];
+      if (dp?.includePrimary !== false && Array.isArray(dp?.primary_path?.path)) {
+        lengths.push(dp.primary_path.path.length);
+      }
+      (Array.isArray(dp?.alternatives) ? dp.alternatives : []).forEach(alt => {
+        lengths.push(Array.isArray(alt?.path) ? alt.path.length : 0);
+      });
+      const maxLen = lengths.length ? Math.max(...lengths) : 0;
+      rowOffsetByDest.set(dest, cumulativeLevel);
+      cumulativeLevel += maxLen + 10; // generous vertical gap between destinations
+    });
+  }
 
-// Helpers to detect IP strings
- const isIPv4 = (s) => {
-   if (typeof s !== 'string') return false;
-   const m = s.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-   if (!m) return false;
-   return m.slice(1).every(o => Number(o) >= 0 && Number(o) <= 255);
- };
- const isIPv6 = (s) => typeof s === 'string' && s.includes(':');
- const normalizeIp = (s) => (isIPv4(s) || isIPv6(s)) ? s : null;
+  // ===== IPv6-only helpers =====
+  const isIPv6 = (s) => typeof s === 'string' && s.includes(':');
+  const normalizeIp = (s) => (isIPv6(s) ? s : null);
 
+  // Map hierarchy → IPv6 mask
+  const HIERARCHY_MASKS_V6 = {
+    subnet: 64,   // /64
+    'isp-pop': 48, // /48
+    isp: 32       // /32
+  };
 
+  // Returns canonical IPv6 prefix string (e.g., "2001:db8:abcd::/48")
+  function getHierarchyPrefix(ip, networkHierarchy, dataTransformer) {
+    if (!ip || networkHierarchy === 'none') return null;
+    const mask = HIERARCHY_MASKS_V6[networkHierarchy];
+    if (!mask) return null;
+    return dataTransformer.getNetworkPrefix(ip, mask);
+  }
 
   // Build a detail bucket per logical node key so drawers always work
   // Key format:
+  // Show All Paths mode (none):
+  // - ip node:       ip:<ip>@d:<dest>@h:<hop>@p:<pathId>
+  // - timeout node:  timeout@d:<dest>@h:<hop>@p:<pathId>
+  // Shared IPs mode:
+  // - ip node:       ip:<ip>@h:<hop>
+  // - timeout node:  timeout@h:<hop>
+  // Per-destination scope (prefix/asn):
   // - ip node:       ip:<ip>@d:<dest>@h:<hop>
   // - prefix node:   prefix:<prefix>@d:<dest>@h:<hop>
+  // - asn node:      asn:<asn>@d:<dest>@h:<hop>
   // - timeout node:  timeout@d:<dest>@h:<hop>
+  // Cross-destination scope (prefix/asn):
+  // - ip node:       ip:<ip>@h:<hop>
+  // - prefix node:   prefix:<prefix>@h:<hop>
+  // - asn node:      asn:<asn>@h:<hop>
+  // - timeout node:  timeout@h:<hop>
   const detailsByKey = new Map();
 
   // Pass 1: collect details and compute max hop per destination
@@ -101,11 +144,15 @@ export function buildGraph({
     const addPath = (pathObj, type, altIndex) => {
       if (!pathObj || !Array.isArray(pathObj.path)) return;
       const hops = pathObj.path;
-      const pathId = type === 'PRIMARY'
-        ? `${destination}-PRIMARY`
-        : `${destination}-ALTERNATIVE ${altIndex}`;
-      pathDescriptors.push({ destination, destColor, pathId, hops });
 
+      // Deterministic pathId so the graph is stable across renders
+      const hopSig = JSON.stringify((hops || []).map(h => h?.ip || 'timeout'));
+      let hash = 0; for (let i = 0; i < hopSig.length; i++) hash = ((hash << 5) - hash) + hopSig.charCodeAt(i) | 0;
+      const pathId = type === 'PRIMARY'
+        ? `${destination}-PRIMARY-${hash}`
+        : `${destination}-ALTERNATIVE-${altIndex}-${hash}`;
+
+      pathDescriptors.push({ destination, destColor, pathId, hops });
       globalMaxHop = Math.max(globalMaxHop, hops.length);
 
       // Determine expected destination IP (from data or destination key if it's an IP)
@@ -125,27 +172,72 @@ export function buildGraph({
         lastRealIdx >= 0 &&
         !!expectedDestIp &&
         hops[lastRealIdx]?.ip === expectedDestIp;
-      
-      const isTerminalHop = (idx, iHop) =>
+
+      const isTerminalHop = (idx) =>
         idx === lastRealIdx && (!expectedDestIp || matchesExpected);
 
       // Collect details keyed by the final rendering key
       hops.forEach((hop, idx) => {
         const hopNumber = hop?.hop_number ?? (idx + 1);
         let key;
+
         if (!hop || hop.is_timeout || !hop.ip) {
-          key = `timeout@d:${destination}@h:${hopNumber}`;
+          // Timeout nodes handling
+          if (aggregationMode === 'none') {
+            key = `timeout@d:${destination}@h:${hopNumber}@p:${pathId}`;
+          } else if (aggregationMode === 'shared-ips') {
+            key = `timeout@h:${hopNumber}`;
+          } else {
+            key = (aggregationScope === 'cross-destination')
+              ? `timeout@h:${hopNumber}`
+              : `timeout@d:${destination}@h:${hopNumber}`;
+          }
+        } else if (!isIPv6(hop.ip)) {
+          // If anything non-IPv6 sneaks in, treat as timeout-like to avoid mixing
+          const base = (aggregationScope === 'cross-destination')
+            ? `timeout@h:${hopNumber}` : `timeout@d:${destination}@h:${hopNumber}`;
+          key = (aggregationMode === 'none') ? `${base}@p:${pathId}` : base;
         } else {
-          if (showPrefixAggregation) {
-            const prefix = dataTransformer.getNetworkPrefix(hop.ip);
-            const collapsed = !expandedPrefixes?.has(prefix);
-            if (collapsed) {
-              key = `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
+          // Handle different aggregation modes for IP nodes
+          if (networkHierarchy !== 'none') {
+            const prefix = getHierarchyPrefix(hop.ip, networkHierarchy, dataTransformer);
+            const isExpanded = expandedPrefixes?.has(prefix);
+            if (isExpanded) {
+              if (aggregationMode === 'none') {
+                key = (aggregationScope === 'cross-destination')
+                  ? `ip:${hop.ip}@h:${hopNumber}@p:${pathId}`
+                  : `ip:${hop.ip}@d:${destination}@h:${hopNumber}@p:${pathId}`;
+              } else {
+                key = (aggregationScope === 'cross-destination')
+                  ? `ip:${hop.ip}@h:${hopNumber}`
+                  : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
+              }
             } else {
-              key = `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
+              key = (aggregationScope === 'cross-destination')
+                ? `prefix:${prefix}@h:${hopNumber}`
+                : `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
+            }
+          } else if (aggregationMode === 'none') {
+            key = `ip:${hop.ip}@d:${destination}@h:${hopNumber}@p:${pathId}`;
+          } else if (aggregationMode === 'shared-ips') {
+            key = `ip:${hop.ip}@h:${hopNumber}`;
+          } else if (aggregationMode === 'asn') {
+            const asnGroup = `ASN-Unknown`; // TODO: real ASN lookup if/when available
+            const collapsed = !expandedAsnGroups?.has(asnGroup);
+            if (collapsed) {
+              key = (aggregationScope === 'cross-destination')
+                ? `asn:${asnGroup}@h:${hopNumber}`
+                : `asn:${asnGroup}@d:${destination}@h:${hopNumber}`;
+            } else {
+              key = (aggregationScope === 'cross-destination')
+                ? `ip:${hop.ip}@h:${hopNumber}`
+                : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
             }
           } else {
-            key = `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
+            // 'prefix' mode without hierarchy → treat like shared-ips keys then aggregate later
+            key = (aggregationScope === 'cross-destination')
+              ? `ip:${hop.ip}@h:${hopNumber}`
+              : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
           }
         }
 
@@ -161,7 +253,7 @@ export function buildGraph({
           timestamp: pathObj?.timeStamp ?? null,
           pathTimestamps: Array.isArray(pathObj?.timestamps) ? pathObj.timestamps : [],
           protocol: pathObj?.protocol ?? (hop?.protocol ?? null),
-          destinationReached: isTerminalHop(idx, hop),
+          destinationReached: isTerminalHop(idx),
           pathPercent: pathObj?.percent ?? null,
           pathAvgRtt: pathObj?.avg_rtt ?? null,
           pathCount: pathObj?.count ?? null,
@@ -192,32 +284,74 @@ export function buildGraph({
     fixed: { x: false, y: true }
   }));
 
-  // Pass 2: create all per-destination/hop nodes (so edges never point to ghosts)
-  detailsByKey.forEach((list, key) => {
+  // Pass 1.5: Apply prefix aggregation if enabled (or hierarchy forces it)
+  let finalDetailsByKey = new Map(detailsByKey);
+  if (networkHierarchy !== 'none' || showPrefixAggregation) {
+    finalDetailsByKey = applyPrefixAggregation(detailsByKey, {
+      aggregationScope,
+      expandedPrefixes,
+      dataTransformer,
+      networkHierarchy
+    });
+  }
+
+  // Pass 2: create all nodes (so edges never point to ghosts)
+  finalDetailsByKey.forEach((list, key) => {
     // Parse key
-    // pattern: <type>:(value)?@d:<dest>@h:<hop>
-    const [left, rest] = key.split('@d:');
+    // patterns:
+    // - <type>:(value)?@d:<dest>@h:<hop>@p:<pathId> (show all paths)
+    // - <type>:(value)?@d:<dest>@h:<hop> (per-destination)
+    // - <type>:(value)?@h:<hop> (cross-destination/shared)
+    let left, rest, dest, hopStr;
+
+    // Handle path ID suffix first (for "none" mode)
+    let cleanKey = key;
+    if (key.includes('@p:')) {
+      cleanKey = key.substring(0, key.lastIndexOf('@p:'));
+    }
+
+    if (cleanKey.includes('@d:')) {
+      // Per-destination format: <type>:(value)?@d:<dest>@h:<hop>
+      [left, rest] = cleanKey.split('@d:');
+      const [destAndHop] = rest.split('@h:');
+      dest = destAndHop;
+      hopStr = rest.substring(destAndHop.length + 3);
+    } else {
+      // Cross-destination format: <type>:(value)?@h:<hop>
+      [left, rest] = cleanKey.split('@h:');
+      dest = 'cross-destination'; // placeholder for display
+      hopStr = rest;
+    }
+
     const [typeAndValue] = left.split('@'); // ignore extra
     const type = typeAndValue.startsWith('timeout') ? 'timeout'
       : typeAndValue.startsWith('ip:') ? 'ip'
-        : 'prefix';
+      : typeAndValue.startsWith('asn:') ? 'asn'
+      : 'prefix';
+
     const value = type === 'ip'
       ? typeAndValue.substring(3)
       : type === 'prefix'
         ? typeAndValue.substring(7)
-        : null;
+        : type === 'asn'
+          ? typeAndValue.substring(4)
+          : null;
 
-    const [destAndHop] = rest.split('@h:');
-    const [dest, hopStr] = [destAndHop, rest.substring(destAndHop.length + 3)];
     const hopNumber = parseInt(hopStr, 10);
-    const baseRows = rowOffsetByDest.get(dest) ?? 0;
-    const yIndex = baseRows + hopNumber; // stack rows by hop per destination
-    const y = yIndex * rowHeight;
+
+    // Y positioning
+    let y;
+    if (dest === 'cross-destination') {
+      y = hopNumber * rowHeight;
+    } else {
+      const baseRows = rowOffsetByDest.get(dest) ?? 0;
+      const yIndex = baseRows + hopNumber;
+      y = yIndex * rowHeight;
+    }
 
     if (type === 'timeout') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        // ADD: map all paths traversing this timeout hop
         list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
         const isMaxTtl = hopNumber === 30;
         return {
@@ -241,7 +375,7 @@ export function buildGraph({
       const isTerminal = list.some(d => d.destinationReached);
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`)); // ensure mapping
+        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
         return {
           id,
           label: display,
@@ -258,13 +392,11 @@ export function buildGraph({
           fixed: { x: false, y: true }
         };
       });
-    } else {
-      // prefix node
+    } else if (type === 'prefix') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        // ADD: map all underlying paths for collapsed prefix
         list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
-        const label = value; // Use the prefix value as the label
+        const label = value;
         return {
           id,
           label,
@@ -281,8 +413,29 @@ export function buildGraph({
           fixed: { x: false, y: true }
         };
       });
+    } else if (type === 'asn') {
+      addNodeOnce(key, (id) => {
+        nodeDetails.set(id, list);
+        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+        const label = value;
+        return {
+          id,
+          label: `🏢 ${label}`,
+          title: `ASN: ${value}\nHop #${hopNumber} • ${dest}\nClick to expand`,
+          color: { background: '#9C27B0', border: '#7B1FA2' },
+          font: { size: 11, color: '#fff', strokeWidth: 2, strokeColor: '#333' },
+          shape: 'box',
+          size: 22,
+          nodeType: 'asn',
+          asnGroup: value,
+          level: hopNumber,
+          y,
+          physics: false,
+          fixed: { x: false, y: true }
+        };
+      });
     }
-});
+  });
 
   // Pass 3: build edges per path using the same keys we used for nodes
   const edgeUsage = new Map(); // key -> { destinations:Set, colors:[], paths:Set }
@@ -296,44 +449,128 @@ export function buildGraph({
   };
 
   pathDescriptors.forEach(({ destination, destColor, pathId, hops }) => {
-    const laneIndex = laneByDest.get(destination) ?? 0;
-    let lastId = sourceId;
-
     const keyForHop = (hop, idx) => {
       const hopNumber = hop?.hop_number ?? (idx + 1);
-      if (!hop || hop.is_timeout || !hop.ip) {
-        return `timeout@d:${destination}@h:${hopNumber}`;
+
+      const resolveTimeoutKey = (baseKeyWithMaybeP) => {
+        if (aggregationMode === 'none') return `${baseKeyWithMaybeP}@p:${pathId}`;
+        return baseKeyWithMaybeP;
+      };
+
+      // Network hierarchy first (IPv6-only)
+      if (networkHierarchy !== 'none') {
+        if (!hop || hop.is_timeout || !hop.ip) {
+          const base = (aggregationScope === 'cross-destination')
+            ? `timeout@h:${hopNumber}`
+            : `timeout@d:${destination}@h:${hopNumber}`;
+        return resolveTimeoutKey(base);
+        }
+        if (!isIPv6(hop.ip)) {
+          const base = (aggregationScope === 'cross-destination')
+            ? `timeout@h:${hopNumber}`
+            : `timeout@d:${destination}@h:${hopNumber}`;
+          return resolveTimeoutKey(base);
+        }
+        const prefix = getHierarchyPrefix(hop.ip, networkHierarchy, dataTransformer);
+        const isExpanded = expandedPrefixes?.has(prefix);
+        if (isExpanded) {
+          if (aggregationMode === 'none') {
+            return (aggregationScope === 'cross-destination')
+              ? `ip:${hop.ip}@h:${hopNumber}@p:${pathId}`
+              : `ip:${hop.ip}@d:${destination}@h:${hopNumber}@p:${pathId}`;
+          } else {
+            return (aggregationScope === 'cross-destination')
+              ? `ip:${hop.ip}@h:${hopNumber}`
+              : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
+          }
+        }
+        return (aggregationScope === 'cross-destination')
+          ? `prefix:${prefix}@h:${hopNumber}`
+          : `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
       }
-      if (showPrefixAggregation) {
-        const prefix = dataTransformer.getNetworkPrefix(hop.ip);
-        const collapsed = !expandedPrefixes?.has(prefix);
-        return collapsed
-          ? `prefix:${prefix}@d:${destination}@h:${hopNumber}`
+
+      // Timeouts (non-hierarchy)
+      if (!hop || hop.is_timeout || !hop.ip || !isIPv6(hop.ip)) {
+        if (aggregationMode === 'none') {
+          return resolveTimeoutKey(`timeout@d:${destination}@h:${hopNumber}`);
+        } else if (aggregationMode === 'shared-ips') {
+          return `timeout@h:${hopNumber}`;
+        } else {
+          return (aggregationScope === 'cross-destination')
+            ? `timeout@h:${hopNumber}`
+            : `timeout@d:${destination}@h:${hopNumber}`;
+        }
+      }
+
+      // Other aggregation modes (IPv6)
+      if (aggregationMode === 'none') {
+        return `ip:${hop.ip}@d:${destination}@h:${hopNumber}@p:${pathId}`;
+      } else if (aggregationMode === 'shared-ips') {
+        return `ip:${hop.ip}@h:${hopNumber}`;
+      } else if (aggregationMode === 'asn') {
+        const asnGroup = `ASN-Unknown`;
+        const collapsed = !expandedAsnGroups?.has(asnGroup);
+        if (collapsed) {
+          return (aggregationScope === 'cross-destination')
+            ? `asn:${asnGroup}@h:${hopNumber}`
+            : `asn:${asnGroup}@d:${destination}@h:${hopNumber}`;
+        }
+        return (aggregationScope === 'cross-destination')
+          ? `ip:${hop.ip}@h:${hopNumber}`
           : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
       }
-      return `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
+      // 'prefix' mode without hierarchy base
+      return (aggregationScope === 'cross-destination')
+        ? `ip:${hop.ip}@h:${hopNumber}`
+        : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
     };
 
+    // 1) Build raw node id sequence
+    const rawIds = [];
+    let firstIdPushed = false;
     hops.forEach((hop, idx) => {
-      const k = keyForHop(hop, idx);
-      const id = getOrCreateNodeId(k); // already materialized
-      if (id !== lastId) {
-        addEdgeUsage(lastId, id, destination, destColor, pathId);
-        lastId = id;
+      const key = keyForHop(hop, idx);
+      const id = getOrCreateNodeId(key);
+      rawIds.push(id);
+      if (!firstIdPushed) firstIdPushed = true;
+    });
+
+    // 2) Compress consecutive duplicates BUT keep ordering
+    const seq = [];
+    let prev = null;
+    rawIds.forEach(id => {
+      if (id !== prev) {
+        seq.push(id);
+        prev = id;
       }
     });
 
-  
+    // 3) Prepend sourceId if first hop id is different (normally yes)
+    if (seq.length === 0 || seq[0] !== sourceId) {
+      seq.unshift(sourceId);
+    }
+
+    // 4) Add edges along the compressed sequence
+    for (let i = 0; i < seq.length - 1; i++) {
+      const fromId = seq[i];
+      const toId = seq[i + 1];
+      addEdgeUsage(fromId, toId, destination, destColor, pathId);
+    }
   });
 
   // Emit edges (bundle multi-destination colors)
   let edgeId = 1;
+  const isAggregated = aggregationMode !== 'none' || networkHierarchy !== 'none';
+
   edgeUsage.forEach((usage, key) => {
     const [fromStr, toStr] = key.split('->');
     const from = parseInt(fromStr, 10);
     const to = parseInt(toStr, 10);
     const colors = [...new Set(usage.colors)];
     const title = `Used by: ${Array.from(usage.destinations).join(', ')}\nPaths: ${usage.paths.size}`;
+
+    const straightLineStyle = { type: 'continuous', roundness: 0.0, forceDirection: 'horizontal' };
+    const normalCurveStyle = { type: 'continuous', roundness: 0.4, forceDirection: 'horizontal' };
 
     if (colors.length <= 1) {
       const eid = `edge_${edgeId++}`;
@@ -343,7 +580,7 @@ export function buildGraph({
         color: { color: colors[0] || '#999', opacity: 1 },
         width: 2,
         arrows: 'to',
-        smooth: { type: 'continuous', roundness: 0.0, forceDirection: 'horizontal' },
+        smooth: isAggregated ? straightLineStyle : normalCurveStyle,
         dashes: false,
         arrowStrikethrough: false,
         title,
@@ -362,7 +599,7 @@ export function buildGraph({
           color: { color: col, opacity: 1 },
           width: 2,
           arrows: 'to',
-          smooth: curvedForIndex(idx, colors.length),
+          smooth: isAggregated ? straightLineStyle : curvedForIndex(idx, colors.length),
           dashes: false,
           arrowStrikethrough: false,
           title,
@@ -376,5 +613,115 @@ export function buildGraph({
     }
   });
 
-  return { graph: { nodes, edges }, nodeDetails, pathMapping };
+  // Final safety check: remove any duplicate IDs that might have slipped through
+  const uniqueNodes = [];
+  const seenIds = new Set();
+  for (const node of nodes) {
+    if (!seenIds.has(node.id)) {
+      uniqueNodes.push(node);
+      seenIds.add(node.id);
+    }
+  }
+
+  return { graph: { nodes: uniqueNodes, edges }, nodeDetails, pathMapping };
+}
+
+/**
+ * Apply prefix aggregation (IPv6):
+ * - Groups IP nodes by prefix only when multiple IPs share the same prefix at the same hop.
+ * - Respects aggregationScope (per-destination vs cross-destination).
+ * - Respects expandedPrefixes (do not collapse those).
+ * - If networkHierarchy is set, uses its mask (/64, /48, /32); otherwise defaults to /64 when showPrefixAggregation = true.
+ */
+function applyPrefixAggregation(detailsByKey, { aggregationScope, expandedPrefixes, dataTransformer, networkHierarchy }) {
+  const result = new Map();
+  const ipsByHopAndPrefix = new Map(); // hop -> prefix -> [ { key, details, ip, dest? } ]
+
+  // choose an effective mask if hierarchy is off but prefix aggregation requested
+  const effectiveMask = networkHierarchy !== 'none'
+    ? HIERARCHY_MASKS_V6[networkHierarchy]
+    : 64; // default to /64 when showPrefixAggregation is used without hierarchy
+
+  // Walk every detail bucket, re-group IP keys by hop+prefix
+  for (const [key, details] of detailsByKey) {
+    if (!key.startsWith('ip:')) {
+      // Pass through non-IP (timeout/prefix/asn) untouched
+      result.set(key, details);
+      continue;
+    }
+
+    // Extract hop number and remove optional pathId suffix
+    const hSplit = key.split('@h:');
+    if (hSplit.length < 2) { result.set(key, details); continue; }
+
+    let hopStr = hSplit[1];
+    if (hopStr.includes('@p:')) hopStr = hopStr.split('@p:')[0];
+    const hopNumber = parseInt(hopStr, 10);
+
+    // Extract destination if present
+    let dest = null;
+    if (key.includes('@d:')) {
+      const m = key.match(/@d:([^@]+)/);
+      dest = m ? m[1] : null;
+    }
+
+    // Extract IP
+    const ipMatch = key.match(/^ip:([^@]+)/);
+    if (!ipMatch) { result.set(key, details); continue; }
+    const ip = ipMatch[1];
+    if (!ip || ip.indexOf(':') === -1) { result.set(key, details); continue; } // skip non-IPv6
+
+    // Compute prefix
+    const prefix = dataTransformer.getNetworkPrefix(ip, effectiveMask);
+    const isExpanded = expandedPrefixes?.has(prefix);
+
+    if (!ipsByHopAndPrefix.has(hopNumber)) {
+      ipsByHopAndPrefix.set(hopNumber, new Map());
+    }
+    const prefixMap = ipsByHopAndPrefix.get(hopNumber);
+    const bucketKey = prefix;
+    if (!prefixMap.has(bucketKey)) {
+      prefixMap.set(bucketKey, []);
+    }
+    prefixMap.get(bucketKey).push({ key, details, ip, dest, isExpanded });
+  }
+
+  // For each hop/prefix group, either keep IP nodes (expanded or singletons) or build a prefix node
+  for (const [hopNumber, prefixMap] of ipsByHopAndPrefix) {
+    for (const [prefix, ipEntries] of prefixMap) {
+      const anyExpanded = ipEntries.some(e => e.isExpanded);
+
+      if (anyExpanded || ipEntries.length === 1) {
+        // Keep all IP nodes as-is
+        for (const entry of ipEntries) {
+          result.set(entry.key, entry.details);
+        }
+        continue;
+      }
+
+      // Collapsed: build a single prefix node per scope
+      // For per-destination scope, we must not mix different dests into one node.
+      if (aggregationScope === 'per-destination') {
+        const byDest = new Map();
+        for (const entry of ipEntries) {
+          const d = entry.dest ?? 'unknown';
+          if (!byDest.has(d)) byDest.set(d, []);
+          byDest.get(d).push(entry);
+        }
+        for (const [d, entries] of byDest) {
+          const allDetails = entries.flatMap(e => e.details);
+          const prefixKey = `prefix:${prefix}@d:${d}@h:${hopNumber}`;
+          // If a prefixKey already exists (e.g., from pass-through), merge
+          result.set(prefixKey, (result.get(prefixKey) || []).concat(allDetails));
+        }
+      } else {
+        // Cross-destination: single node at hop
+        const allDetails = ipEntries.flatMap(e => e.details);
+        const prefixKey = `prefix:${prefix}@h:${hopNumber}`;
+        result.set(prefixKey, (result.get(prefixKey) || []).concat(allDetails));
+      }
+    }
+  }
+
+  return result;
 }

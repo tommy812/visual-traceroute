@@ -2,24 +2,39 @@ class DataTransformer {
   /**
    * Transform raw database data into the format expected by the frontend
    * @param {Array} rawData - Array of trace runs with hops from the database
+   * @param {Object} opts - Aggregation options
    * @returns {Object} - Transformed data in frontend format
    */
-  transformNetworkData(rawData) {
+  transformNetworkData(rawData, opts = {}) {
     if (!rawData || !Array.isArray(rawData) || rawData.length === 0) {
       return {};
     }
 
-    // Group data by destination
-    const groupedByDestination = this.groupByDestination(rawData);
+    const {
+      aggregationMode = 'destination', // 'destination', 'none', 'asn', 'prefix'
+      aggregationScope = 'per-destination', // 'per-destination', 'cross-destination'
+      selectedProtocols = [],
+      minRTT = null,
+      maxRTT = null,
+      minUsagePercent = null
+    } = opts;
 
-    // Transform each destination's data
-    const transformedData = {};
+    // Apply initial filtering if specified
+    let filteredRuns = this.applyInitialFilters(rawData, { selectedProtocols, minRTT, maxRTT });
 
-    Object.entries(groupedByDestination).forEach(([destination, traceRuns]) => {
-      transformedData[destination] = this.transformDestinationData(destination, traceRuns);
-    });
-
-    return transformedData;
+    // Handle different aggregation modes
+    switch (aggregationMode) {
+      case 'none':
+        return this.transformWithNoAggregation(filteredRuns, opts);
+      case 'asn':
+        return this.transformWithAsnAggregation(filteredRuns, opts);
+      case 'prefix':
+        return this.transformWithPrefixAggregation(filteredRuns, opts);
+      case 'destination':
+      default:
+        // Traditional destination-based aggregation (current behavior)
+        return this.transformWithDestinationAggregation(filteredRuns, opts);
+    }
   }
 
   /**
@@ -90,15 +105,19 @@ class DataTransformer {
   /**
    * Transform a destination's trace runs into the expected format
    */
-  transformDestinationData(destination, traceRuns) {
+  transformDestinationData(destination, traceRuns, opts = {}) {
     // Convert trace runs to path format
     const paths = traceRuns.map(traceRun => this.convertTraceRunToPath(traceRun));
 
+    // Apply path-level filters if we have options
+    const filteredPaths = opts.minRTT || opts.maxRTT ? 
+      this.applyPathLevelFilters(paths, opts) : paths;
+
     // Group paths by similarity to identify primary vs alternatives
-    const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(paths);
+    const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(filteredPaths);
 
     // Group by protocol
-    const byProtocol = paths.reduce((acc, p) => {
+    const byProtocol = filteredPaths.reduce((acc, p) => {
       const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
       (acc[key] ||= []).push(p);
       return acc;
@@ -120,12 +139,24 @@ class DataTransformer {
       };
     });
 
+    // Apply usage percent filter to final results if specified
+    let finalPrimary = primaryPath;
+    let finalAlternatives = alternatives;
+
+    if (opts.minUsagePercent !== null) {
+      const minUsage = parseFloat(opts.minUsagePercent);
+      if (finalPrimary && finalPrimary.percent < minUsage) {
+        finalPrimary = null;
+      }
+      finalAlternatives = (finalAlternatives || []).filter(a => a.percent >= minUsage);
+    }
+
     // Calculate total traces
     const totalTraces = traceRuns.length;
 
     return {
-      primary_path: primaryPath,
-      alternatives: alternatives,
+      primary_path: finalPrimary,
+      alternatives: finalAlternatives,
       total_traces: totalTraces,
       protocol_groups
     };
@@ -203,6 +234,8 @@ class DataTransformer {
 
   /**
    * Get network prefix from IP address
+   * @param {string} ip - The IP address
+   * @param {number} prefixLength - CIDR prefix length (32, 48, 64, etc.)
    */
   getNetworkPrefix(ip, prefixLength = 24) {
     if (!ip || ip === 'null' || ip === null) {
@@ -213,18 +246,37 @@ class DataTransformer {
       // Handle IPv4
       if (ip.includes('.')) {
         const parts = ip.split('.');
-        if (prefixLength === 24) {
+        if (prefixLength === 32) {
+          // ISP allocation (/32 for IPv4 means /8 actually for ISP-level)
+          return `${parts[0]}.0.0.0/8`;
+        } else if (prefixLength === 24) {
+          // Subnet level
           return `${parts[0]}.${parts[1]}.${parts[2]}.0/24`;
         } else if (prefixLength === 16) {
+          // ISP POP level
           return `${parts[0]}.${parts[1]}.0.0/16`;
         }
       }
 
-      // Handle IPv6 - simplified prefix extraction
+      // Handle IPv6
       if (ip.includes(':')) {
         const parts = ip.split(':');
-        if (parts.length >= 4) {
-          return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}::/64`;
+        
+        if (prefixLength === 32) {
+          // ISP allocation level (/32)
+          if (parts.length >= 2) {
+            return `${parts[0]}:${parts[1]}::/32`;
+          }
+        } else if (prefixLength === 48) {
+          // ISP POP level (/48)
+          if (parts.length >= 3) {
+            return `${parts[0]}:${parts[1]}:${parts[2]}::/48`;
+          }
+        } else if (prefixLength === 64) {
+          // Subnet level (/64)
+          if (parts.length >= 4) {
+            return `${parts[0]}:${parts[1]}:${parts[2]}:${parts[3]}::/64`;
+          }
         }
       }
 
@@ -388,6 +440,161 @@ class DataTransformer {
 
     return validated;
   }
+  /**
+   * Apply initial filters to trace runs before aggregation
+   */
+  applyInitialFilters(rawData, { selectedProtocols = [], minRTT = null, maxRTT = null }) {
+    let filtered = rawData;
+
+    // Protocol filter
+    if (selectedProtocols.length > 0) {
+      const protoSet = new Set(selectedProtocols.map(p => String(p).trim().toUpperCase()));
+      filtered = filtered.filter(run => {
+        const runProto = this.normalizeProtocol(
+          run?.traceroute_methods?.description ??
+          run?.traceroute_methods?.name ??
+          run?.probe_protocol ??
+          run?.protocol
+        );
+        return runProto && protoSet.has(runProto);
+      });
+    }
+
+    // RTT filters would need to be applied at path level after conversion
+    // For now, just return protocol-filtered runs
+    return filtered;
+  }
+
+  /**
+   * Traditional destination-based aggregation (current behavior)
+   */
+  transformWithDestinationAggregation(filteredRuns, opts) {
+    // Group data by destination
+    const groupedByDestination = this.groupByDestination(filteredRuns);
+
+    // Transform each destination's data
+    const transformedData = {};
+
+    Object.entries(groupedByDestination).forEach(([destination, traceRuns]) => {
+      transformedData[destination] = this.transformDestinationData(destination, traceRuns, opts);
+    });
+
+    return transformedData;
+  }
+
+  /**
+   * No aggregation - show individual trace runs
+   */
+  transformWithNoAggregation(filteredRuns, opts) {
+    // Group by destination first
+    const groupedByDestination = this.groupByDestination(filteredRuns);
+    const transformedData = {};
+
+    Object.entries(groupedByDestination).forEach(([destination, traceRuns]) => {
+      // Convert each trace run to a path but don't aggregate them
+      const paths = traceRuns.map(traceRun => this.convertTraceRunToPath(traceRun));
+      
+      // Apply RTT and usage filters at path level
+      const filteredPaths = this.applyPathLevelFilters(paths, opts);
+
+      // Instead of picking primary/alternatives, treat each path as individual
+      transformedData[destination] = {
+        primary_path: null, // No primary when no aggregation
+        alternatives: filteredPaths, // All paths are alternatives
+        total_traces: filteredPaths.length,
+        protocol_groups: this.groupPathsByProtocol(filteredPaths)
+      };
+    });
+
+    return transformedData;
+  }
+
+  /**
+   * ASN-based aggregation
+   */
+  transformWithAsnAggregation(filteredRuns, opts) {
+    // For ASN aggregation, we need to fetch ASN info for IPs
+    // This is more complex and would require async calls to geolocation service
+    // For now, implement a simplified version that groups by destination first
+    
+    if (opts.aggregationScope === 'cross-destination') {
+      // TODO: Implement cross-destination ASN aggregation
+      return this.transformWithDestinationAggregation(filteredRuns, opts);
+    } else {
+      // Per-destination ASN aggregation
+      return this.transformWithDestinationAggregation(filteredRuns, opts);
+    }
+  }
+
+  /**
+   * Prefix-based aggregation
+   */
+  transformWithPrefixAggregation(filteredRuns, opts) {
+    if (opts.aggregationScope === 'cross-destination') {
+      // Cross-destination prefix aggregation
+      // Group all runs by prefix instead of destination
+      return this.transformWithCrossPrefixAggregation(filteredRuns, opts);
+    } else {
+      // Per-destination prefix aggregation (current behavior)
+      return this.transformWithDestinationAggregation(filteredRuns, opts);
+    }
+  }
+
+  /**
+   * Apply filters at the path level (after trace runs are converted to paths)
+   */
+  applyPathLevelFilters(paths, { minRTT = null, maxRTT = null, minUsagePercent = null }) {
+    let filtered = paths;
+
+    if (minRTT !== null) {
+      const minRttNum = parseFloat(minRTT);
+      filtered = filtered.filter(p => p.avg_rtt >= minRttNum);
+    }
+
+    if (maxRTT !== null) {
+      const maxRttNum = parseFloat(maxRTT);
+      filtered = filtered.filter(p => p.avg_rtt <= maxRttNum);
+    }
+
+    // Usage percent filtering would need total count context
+    // For now, skip this filter at path level
+    
+    return filtered;
+  }
+
+  /**
+   * Group paths by protocol for protocol_groups structure
+   */
+  groupPathsByProtocol(paths) {
+    const byProtocol = paths.reduce((acc, p) => {
+      const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
+      (acc[key] ||= []).push(p);
+      return acc;
+    }, {});
+
+    const protocol_groups = {};
+    Object.entries(byProtocol).forEach(([proto, groupPaths]) => {
+      // In no-aggregation mode, don't pick primary/alternatives within protocol
+      protocol_groups[proto] = {
+        primary_path: null,
+        alternatives: groupPaths,
+        total_traces: groupPaths.length
+      };
+    });
+
+    return protocol_groups;
+  }
+
+  /**
+   * Cross-destination prefix aggregation (placeholder)
+   */
+  transformWithCrossPrefixAggregation(filteredRuns, opts) {
+    // TODO: Implement cross-destination prefix aggregation
+    // This would group paths that go through the same prefixes regardless of destination
+    return this.transformWithDestinationAggregation(filteredRuns, opts);
+  }
+
+
 }
 
 const dataTransformerInstance = new DataTransformer();

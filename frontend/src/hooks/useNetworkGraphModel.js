@@ -7,7 +7,11 @@ export function useNetworkGraphModel({
   dateRange,
   showPrimaryOnly,
   showPrefixAggregation,
-  expandedPrefixes
+  expandedPrefixes,
+  aggregationMode = 'none',
+  aggregationScope = 'per-destination',
+  networkHierarchy = 'none',
+  expandedAsnGroups = new Set()
 }) {
   const filteredData = useMemo(() => {
     if (!filteredByHook || !selectedDestinations || selectedDestinations.length === 0) return {};
@@ -54,9 +58,13 @@ export function useNetworkGraphModel({
       selectedDestinations,
       showPrimaryOnly,
       showPrefixAggregation,
-      expandedPrefixes
+      expandedPrefixes,
+      aggregationMode,
+      aggregationScope,
+      networkHierarchy,
+      expandedAsnGroups
     });
-  }, [filteredData, selectedDestinations, showPrimaryOnly, showPrefixAggregation, expandedPrefixes]);
+  }, [filteredData, selectedDestinations, showPrimaryOnly, showPrefixAggregation, expandedPrefixes, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups]);
 
   return { graph, nodeDetails, pathMapping };
 }

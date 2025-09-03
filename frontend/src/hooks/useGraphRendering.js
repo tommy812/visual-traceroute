@@ -71,6 +71,8 @@ export const useGraphRendering = (isFullscreen, dimensions) => {
         return '#f44336'; // Red for timeout nodes
       case 'prefix':
         return '#FF9800'; // Orange for prefix nodes
+      case 'asn':
+        return '#9C27B0'; // Purple for ASN nodes
       case 'timeout_group':
         return '#9C27B0'; // Purple for timeout groups
       case 'destination':

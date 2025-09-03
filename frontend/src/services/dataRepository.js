@@ -19,8 +19,8 @@ function toDate(value) {
   return value ? new Date(value) : null;
 }
 
-function transformAndValidate(rawRuns) {
-  const transformed = dataTransformer.transformNetworkData(rawRuns);
+function transformAndValidate(rawRuns, opts = {}) {
+  const transformed = dataTransformer.transformNetworkData(rawRuns, opts);
   // If available in your transformer, keep validation step:
   const validated = dataTransformer.validateTransformedData
     ? dataTransformer.validateTransformedData(transformed)
@@ -30,16 +30,16 @@ function transformAndValidate(rawRuns) {
 
 const dataRepository = {
   // Try building data from cache for requested range
-  getCachedNetworkData: ({ destinations = [], start_date, end_date }) => {
+  getCachedNetworkData: ({ destinations = [], start_date, end_date }, opts = {}) => {
     const start = toDate(start_date);
     const end = toDate(end_date);
     const raw = networkDataCache.getRunsInRange(destinations, start, end);
     if (!raw.length) return null;
-    return transformAndValidate(raw);
+    return transformAndValidate(raw, opts);
   },
 
   // Fetch from API, cache raw, return transformed
-  fetchAndCacheNetworkData: async (params) => {
+  fetchAndCacheNetworkData: async (params, opts = {}) => {
     const { destinations = [], start_date, end_date } = params || {};
     const res = await apiService.getNetworkData(params);
     const rawRuns = Array.isArray(res?.data) ? res.data : [];
@@ -53,7 +53,7 @@ const dataRepository = {
     if (sameStart && sameEnd) {
       networkDataCache.markCoverageLast30Days(destinations);
     }
-    return transformAndValidate(rawRuns);
+    return transformAndValidate(rawRuns, opts);
   },
 
   // Background prefetch for the last 30 days; no-op if already covered
