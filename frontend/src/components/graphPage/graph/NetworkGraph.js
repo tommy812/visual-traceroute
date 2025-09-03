@@ -88,7 +88,8 @@ const NetworkGraph = React.memo(({
   
   // New aggregation controls
   const [aggregationMode, setAggregationMode] = useState('none'); // 'none', 'shared-ips', 'asn'
-  const [aggregationScope, setAggregationScope] = useState('cross-destination'); // 'per-destination', 'cross-destination'
+  // Default: show all paths (mode 'none') should be per-destination
+  const [aggregationScope, setAggregationScope] = useState('per-destination'); // 'per-destination', 'cross-destination'
   const [expandedAsnGroups, setExpandedAsnGroups] = useState(new Set()); // Track expanded ASN groups
   
   // Network hierarchy controls (separate from path aggregation)
@@ -121,6 +122,20 @@ const NetworkGraph = React.memo(({
     });
   }, []);
 
+  // Explicit collapse of a prefix (used by UI buttons / double-click)
+  const handlePrefixCollapse = useCallback((prefix) => {
+    setExpandedPrefixes(prev => {
+      if (!prev.has(prefix)) return prev;
+      const next = new Set(prev);
+      next.delete(prefix);
+      return next;
+    });
+  }, []);
+
+  const handleCollapseAllPrefixes = useCallback(() => {
+    setExpandedPrefixes(new Set());
+  }, []);
+
   // Toggle prefix aggregation
   const handlePrefixAggregationToggle = useCallback(() => {
     setShowPrefixAggregation(prev => !prev);
@@ -139,12 +154,13 @@ const NetworkGraph = React.memo(({
     } else if (mode === 'none') {
       setShowPrefixAggregation(false);
     }
+    // Automatic scope selection:
+    // Show All Paths (none) -> per-destination
+    // Shared IPs -> cross-destination
+    if (mode === 'none') setAggregationScope('per-destination');
+    else if (mode === 'shared-ips') setAggregationScope('cross-destination');
   }, []);
 
-  // Handle aggregation scope changes
-  const handleAggregationScopeChange = useCallback((scope) => {
-    setAggregationScope(scope);
-  }, []);
 
   // Handle network hierarchy changes
   const handleNetworkHierarchyChange = useCallback((hierarchy) => {
@@ -209,7 +225,7 @@ const NetworkGraph = React.memo(({
   });
 
 
-  const { highlightedGraph, highlightedPaths, highlightPath, highlightPathById, highlightPathsForNode, clearHighlight } =
+  const { highlightedGraph, highlightedPaths, highlightPath, highlightPathsForNode, clearHighlight } =
     usePathHighlighting({ graph, pathMapping, nodeDetails });
 
 
@@ -496,6 +512,22 @@ const NetworkGraph = React.memo(({
         clearHighlight();
       }
     },
+    doubleClick: function(event) {
+      const { nodes } = event;
+      if (nodes && nodes.length === 1) {
+        const rawId = nodes[0];
+        const nodeId = typeof rawId === 'string' ? parseInt(rawId, 10) : rawId;
+        const node = graph.nodes.find(n => n.id === nodeId);
+        // Collapse parent prefix if double-clicking a child hop
+        if (node?.nodeType === 'hop' && node.parentPrefix && expandedPrefixes.has(node.parentPrefix)) {
+          handlePrefixCollapse(node.parentPrefix);
+        }
+        // Collapse prefix if double-clicking the prefix node itself (if expanded representation kept)
+        if (node?.nodeType === 'prefix' && expandedPrefixes.has(node.prefix)) {
+          handlePrefixCollapse(node.prefix);
+        }
+      }
+    },
     click: function (event) {
       event.preventDefault?.();
       if (event.nodes.length === 0 && event.edges.length === 0) {
@@ -505,7 +537,7 @@ const NetworkGraph = React.memo(({
     },
     hoverNode: function () {},
     hoverEdge: function () {}
-  }), [handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode]);
+  }), [handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode, expandedPrefixes, handlePrefixCollapse]);
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
     networkRef.current = network;
@@ -514,71 +546,71 @@ const NetworkGraph = React.memo(({
 
   // After networkInstance is set, apply highlight changes directly:
 useEffect(() => {
-  if (!networkInstance) return;
-  if (!highlightedGraph || !graph) return;
-  if (highlightedGraph === graph) return; // no highlighting active
-
+  if (!networkInstance || !graph) return;
   const nodesDS = networkInstance.body.data.nodes;
   const edgesDS = networkInstance.body.data.edges;
+
+  // If no highlighted paths -> restore original styles
+  if (!highlightedPaths || highlightedPaths.length === 0) {
+    let rafRestore = requestAnimationFrame(() => {
+      // Reset nodes
+      nodesDS.update(graph.nodes.map(n => ({
+        id: n.id,
+        color: n.color,
+        opacity: n.opacity ?? 1,
+        borderWidth: n.borderWidth ?? 1,
+        font: n.font
+      })));
+      // Reset edges
+      edgesDS.update(graph.edges.map(e => ({
+        id: e.id,
+        color: e.color,
+        width: e.width,
+        dashes: e.dashes || false
+      })));
+    });
+    return () => cancelAnimationFrame(rafRestore);
+  }
+
+  // Active highlighting: apply diff from highlightedGraph
+  if (!highlightedGraph) return;
 
   const changedNodes = [];
   const changedEdges = [];
 
-  // Helper comparators (only compare few styling fields)
-  const nodeChanged = (curr, next) => {
-    return (
-      curr.color?.background !== next.color?.background ||
-      curr.color?.border !== next.color?.border ||
-      curr.opacity !== next.opacity ||
-      curr.borderWidth !== next.borderWidth
-    );
-  };
+  const nodeChanged = (curr, next) => (
+    curr.color?.background !== next.color?.background ||
+    curr.color?.border !== next.color?.border ||
+    curr.opacity !== next.opacity ||
+    curr.borderWidth !== next.borderWidth
+  );
 
-  const edgeChanged = (curr, next) => {
-    return (
-      curr.color !== next.color &&
-      curr.color?.color !== next.color?.color ||
-      curr.color?.opacity !== next.color?.opacity ||
-      curr.width !== next.width ||
-      JSON.stringify(curr.dashes) !== JSON.stringify(next.dashes)
-    );
-  };
+  const edgeChanged = (curr, next) => (
+    (curr.color?.color !== next.color?.color || curr.color?.opacity !== next.color?.opacity) ||
+    curr.width !== next.width ||
+    JSON.stringify(curr.dashes) !== JSON.stringify(next.dashes)
+  );
 
   let raf = requestAnimationFrame(() => {
-    // Diff nodes
     for (const n of highlightedGraph.nodes) {
       const current = nodesDS.get(n.id);
       if (!current) continue;
       if (nodeChanged(current, n)) {
-        changedNodes.push({
-          id: n.id,
-          color: n.color,
-          opacity: n.opacity,
-          borderWidth: n.borderWidth,
-          font: n.font // keep label styling sync
-        });
+        changedNodes.push({ id: n.id, color: n.color, opacity: n.opacity, borderWidth: n.borderWidth, font: n.font });
       }
     }
-    // Diff edges
     for (const e of highlightedGraph.edges) {
       const current = edgesDS.get(e.id);
       if (!current) continue;
       if (edgeChanged(current, e)) {
-        changedEdges.push({
-          id: e.id,
-          color: e.color,
-          width: e.width,
-          dashes: e.dashes
-        });
+        changedEdges.push({ id: e.id, color: e.color, width: e.width, dashes: e.dashes });
       }
     }
-
     if (changedNodes.length) nodesDS.update(changedNodes);
     if (changedEdges.length) edgesDS.update(changedEdges);
   });
-
   return () => cancelAnimationFrame(raf);
-}, [highlightedGraph, networkInstance, graph]);
+}, [highlightedGraph, highlightedPaths, networkInstance, graph]);
 
 
 
@@ -610,8 +642,6 @@ useEffect(() => {
         // Aggregation controls
         aggregationMode={aggregationMode}
         onAggregationModeChange={handleAggregationModeChange}
-        aggregationScope={aggregationScope}
-        onAggregationScopeChange={handleAggregationScopeChange}
         showPrefixAggregation={showPrefixAggregation}
         onTogglePrefixAggregation={handlePrefixAggregationToggle}
         expandedCount={expandedPrefixes.size + expandedAsnGroups.size}
@@ -620,6 +650,8 @@ useEffect(() => {
         onNetworkHierarchyChange={handleNetworkHierarchyChange}
         highlightedPaths={highlightedPaths}      // added
         onClearHighlight={clearHighlight}        // added
+  onCollapseAllPrefixes={handleCollapseAllPrefixes}
+  onCollapsePrefix={handlePrefixCollapse}
       />
     </div>
   );

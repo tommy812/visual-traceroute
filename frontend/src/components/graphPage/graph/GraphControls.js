@@ -18,8 +18,6 @@ const GraphControls = ({
   // aggregation controls
   aggregationMode,
   onAggregationModeChange,
-  aggregationScope,
-  onAggregationScopeChange,
   showPrefixAggregation,
   onTogglePrefixAggregation,
   expandedCount = 0,
@@ -31,6 +29,8 @@ const GraphControls = ({
   // highlighting (moved from NetworkGraph)
   highlightedPaths = [],
   onClearHighlight
+  , onCollapseAllPrefixes
+  , onCollapsePrefix
 }) => {
   return (
     <>
@@ -254,29 +254,6 @@ const GraphControls = ({
             ))}
           </div>
           
-          {/* Aggregation Scope - show for modes that support it */}
-          {(networkHierarchy !== 'none' || aggregationMode === 'asn') && (
-            <>
-              <div style={{ fontSize: isFullscreen ? '11px' : '10px', fontWeight: 'bold', color: '#555', marginTop: '8px' }}>
-                Scope:
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
-                {['per-destination', 'cross-destination'].map(scope => (
-                  <label key={scope} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
-                    <input
-                      type="radio"
-                      name="aggregationScope"
-                      value={scope}
-                      checked={aggregationScope === scope}
-                      onChange={(e) => onAggregationScopeChange(e.target.value)}
-                      style={{ margin: 0, cursor: 'pointer' }}
-                    />
-                    {scope === 'per-destination' ? '📍 Per Destination' : '🌍 All Destinations'}
-                  </label>
-                ))}
-              </div>
-            </>
-          )}
           
           {/* Prefix aggregation toggle - show when network hierarchy is selected */}
           {networkHierarchy !== 'none' && (
@@ -294,6 +271,17 @@ const GraphControls = ({
           {showPrefixAggregation && expandedCount > 0 && (
             <div style={{ fontSize: isFullscreen ? '10px' : '9px', color: '#666', marginLeft: '24px' }}>
               Expanded: {expandedCount} group(s)
+            </div>
+          )}
+          {showPrefixAggregation && expandedCount > 0 && (
+            <div style={{ display: 'flex', gap: '6px', marginLeft: '8px', marginTop: '6px' }}>
+              <button
+                onClick={onCollapseAllPrefixes}
+                style={{ fontSize: isFullscreen ? '10px' : '9px', padding: '2px 6px', cursor: 'pointer', border: '1px solid #ccc', background: '#f7f7f7', borderRadius: '3px' }}
+                title="Collapse all expanded prefixes"
+              >
+                Collapse All
+              </button>
             </div>
           )}
           {(networkHierarchy !== 'none' || aggregationMode === 'asn') && (

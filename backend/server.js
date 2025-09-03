@@ -96,12 +96,27 @@ const startServer = async () => {
     }
 
     // Start the server
-    app.listen(PORT, () => {
+    app.listen(PORT, async () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🌐 CORS enabled for: ${process.env.FRONTEND_URL || 'http://localhost:3000'}`);
       console.log(`📚 API Documentation: http://localhost:${PORT}/`);
       console.log('✅ Server started successfully');
+
+      // Optional automatic prewarm
+      if (process.env.PREWARM_ON_START === '1') {
+        try {
+          const tracerouteController = require('./controllers/tracerouteController');
+          const lookback = parseInt(process.env.PREWARM_LOOKBACK_MINUTES || '60', 10);
+          const fastest = process.env.PREWARM_FASTEST === '1';
+          const shortest = process.env.PREWARM_SHORTEST === '1';
+          console.log(`🧊 Prewarming aggregated cache (lookback=${lookback}m, fastest=${fastest}, shortest=${shortest})...`);
+          const r = await tracerouteController.prewarmAggregatedPaths({ lookbackMinutes: lookback, fastest, shortest });
+          if (r.error) console.warn('Prewarm failed:', r.error); else console.log('✅ Prewarm done:', r);
+        } catch (e) {
+          console.warn('Prewarm exception:', e.message);
+        }
+      }
     });
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);

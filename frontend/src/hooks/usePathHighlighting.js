@@ -1,6 +1,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { adjustColorIntensity, pathHighlightColors } from '../utils/colorUtils';
+import { pathHighlightColors } from '../utils/colorUtils';
 
 export default function usePathHighlighting({ graph, pathMapping, nodeDetails }) {
   const [highlightedPaths, setHighlightedPaths] = useState([]);
@@ -15,12 +15,12 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
   // Rebuild edges for a path (now includes source)
   const reconstructEdgesForPath = useCallback((pathId) => {
     if (!graph || !nodeDetails) return [];
-    const [dest, pathType] = pathId.split('-', 2);
+  const [dest, pathType] = pathId.split('-', 2);
     const hopEntries = [];
 
     nodeDetails.forEach((details, nodeId) => {
       details.forEach(d => {
-        if (d.destination === dest && d.pathType === pathType) {
+        if (d.pathId === pathId || (d.destination === dest && d.pathType === pathType)) {
           hopEntries.push({ nodeId, hop: d.hopNumber ?? d.hop ?? null });
         }
       });
@@ -109,7 +109,7 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
     const pathStats = new Map();
 
     details.forEach(d => {
-      const pid = `${d.destination}-${d.pathType}`;
+  const pid = d.pathId || `${d.destination}-${d.pathType}`;
       if (!pathStats.has(pid)) {
         pathStats.set(pid, {
           pathPercent: d.pathPercent || 0,

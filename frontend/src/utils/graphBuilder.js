@@ -133,6 +133,14 @@ export function buildGraph({
   // - asn node:      asn:<asn>@h:<hop>
   // - timeout node:  timeout@h:<hop>
   const detailsByKey = new Map();
+  // Track earliest hop where a collapsed hierarchy prefix appears (global across paths)
+  const collapsedPrefixMinHop = new Map(); // prefix -> earliestHopNumber
+
+  const getCollapsedPrefixKey = (prefix, hopNumber) => {
+    if (!collapsedPrefixMinHop.has(prefix)) collapsedPrefixMinHop.set(prefix, hopNumber);
+    const firstHop = collapsedPrefixMinHop.get(prefix);
+    return `prefix:${prefix}@h:${firstHop}`;
+  };
 
   // Pass 1: collect details and compute max hop per destination
   const pathDescriptors = []; // [{ destination, destColor, pathId, hops }]
@@ -144,13 +152,19 @@ export function buildGraph({
     const addPath = (pathObj, type, altIndex) => {
       if (!pathObj || !Array.isArray(pathObj.path)) return;
       const hops = pathObj.path;
+  const isSingleHopPath = Array.isArray(hops) && hops.length === 1;
 
-      // Deterministic pathId so the graph is stable across renders
-      const hopSig = JSON.stringify((hops || []).map(h => h?.ip || 'timeout'));
-      let hash = 0; for (let i = 0; i < hopSig.length; i++) hash = ((hash << 5) - hash) + hopSig.charCodeAt(i) | 0;
-      const pathId = type === 'PRIMARY'
-        ? `${destination}-PRIMARY-${hash}`
-        : `${destination}-ALTERNATIVE-${altIndex}-${hash}`;
+      // Deterministic pathId so the graph is stable across renders.
+      // Cache it directly on the path object to avoid recomputing on subsequent renders.
+      let pathId = pathObj._cachedPathId;
+      if (!pathId) {
+        const hopSig = JSON.stringify((hops || []).map(h => h?.ip || 'timeout'));
+        let hash = 0; for (let i = 0; i < hopSig.length; i++) hash = ((hash << 5) - hash) + hopSig.charCodeAt(i) | 0;
+        pathId = type === 'PRIMARY'
+          ? `${destination}-PRIMARY-${hash}`
+          : `${destination}-ALTERNATIVE-${altIndex}-${hash}`;
+        Object.defineProperty(pathObj, '_cachedPathId', { value: pathId, enumerable: false, configurable: true });
+      }
 
       pathDescriptors.push({ destination, destColor, pathId, hops });
       globalMaxHop = Math.max(globalMaxHop, hops.length);
@@ -174,7 +188,7 @@ export function buildGraph({
         hops[lastRealIdx]?.ip === expectedDestIp;
 
       const isTerminalHop = (idx) =>
-        idx === lastRealIdx && (!expectedDestIp || matchesExpected);
+        !isSingleHopPath && idx === lastRealIdx && (!expectedDestIp || matchesExpected);
 
       // Collect details keyed by the final rendering key
       hops.forEach((hop, idx) => {
@@ -213,9 +227,8 @@ export function buildGraph({
                   : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
               }
             } else {
-              key = (aggregationScope === 'cross-destination')
-                ? `prefix:${prefix}@h:${hopNumber}`
-                : `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
+              // Collapsed hierarchy prefix: use earliest hop number globally so all occurrences map to one node
+              key = getCollapsedPrefixKey(prefix, hopNumber);
             }
           } else if (aggregationMode === 'none') {
             key = `ip:${hop.ip}@d:${destination}@h:${hopNumber}@p:${pathId}`;
@@ -240,6 +253,7 @@ export function buildGraph({
               : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
           }
         }
+        const destDomainName = destData?.domain?.name || destData?.domainName || null;
 
         if (!detailsByKey.has(key)) detailsByKey.set(key, []);
         detailsByKey.get(key).push({
@@ -247,7 +261,7 @@ export function buildGraph({
           hostname: hop?.hostname ?? (hop?.ip ?? 'Timeout'),
           rtt_ms: hop?.rtt_ms ?? [],
           destination,
-          domainName: destData?.domain?.name || null,          // <--- add
+          domainName: destDomainName,        
           hopNumber,
           pathType: type,
           is_timeout: !hop || hop.is_timeout || !hop.ip,
@@ -353,18 +367,29 @@ export function buildGraph({
     if (type === 'timeout') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+  list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
         const isMaxTtl = hopNumber === 30;
+        // Aggregation insight: number of unique paths & destinations represented by this timeout node
+        const uniquePaths = new Set(list.map(d => d.pathId).filter(Boolean));
+        const uniqueDests = new Set(list.map(d => d.destination).filter(Boolean));
+        const pathCount = uniquePaths.size;
+        const destCount = uniqueDests.size;
+        const aggregated = pathCount > 1 || destCount > 1;
+        const dynamicLabel = aggregated ? `⏱ ${pathCount}` : '⏱️';
+        const dynamicSize = aggregated ? Math.min(16 + (pathCount - 1) * 2, 32) : 16;
         return {
           id,
-          label: '⏱️',
-          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber} • ${dest}`,
+          label: dynamicLabel,
+          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber} • ${dest}` + (aggregated ? `\nAggregated: ${pathCount} path${pathCount!==1?'s':''} across ${destCount} destination${destCount!==1?'s':''}` : ''),
           color: { background: '#F44336', border: '#D32F2F' },
           font: { size: 12, color: '#FFF', strokeWidth: 2, strokeColor: '#fff' },
           shape: 'dot',
-          size: 16,
+          size: dynamicSize,
           nodeType: 'timeout',
           timeoutKey: key,
+          aggregatedTimeout: aggregated,
+          timeoutPaths: Array.from(uniquePaths),
+          timeoutDestinations: Array.from(uniqueDests),
           level: hopNumber,
           y,
           physics: false,
@@ -376,7 +401,7 @@ export function buildGraph({
       const isTerminal = list.some(d => d.destinationReached);
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+  list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
         return {
           id,
           label: display,
@@ -387,6 +412,8 @@ export function buildGraph({
           size: 18,
           nodeType: 'hop',
           ip: value,
+          // Provide parentPrefix so expanded hierarchy groups can be collapsed via UI / double-click
+          parentPrefix: networkHierarchy !== 'none' ? getHierarchyPrefix(value, networkHierarchy, dataTransformer) : null,
           level: hopNumber,
           y,
           physics: false,
@@ -396,15 +423,40 @@ export function buildGraph({
     } else if (type === 'prefix') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
-        const label = value;
+  list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
+        // Determine if this prefix actually aggregates >1 distinct IP.
+        const uniqueIps = new Set(list.filter(d => d.ip && !d.is_timeout).map(d => d.ip));
+        const isAggregatedPrefix = uniqueIps.size > 1;
+        const firstDetail = list[0];
+        const fallbackLabel = firstDetail?.hostname || firstDetail?.ip || value;
+        if (!isAggregatedPrefix) {
+          // Treat as a normal hop (dot) since it represents only one underlying node
+          return {
+            id,
+            label: fallbackLabel,
+            title: `IP: ${fallbackLabel}\n(Hierarchy mask produced no aggregation)\nHop #${hopNumber} • ${dest}`,
+            color: { background: '#FFA726', border: '#FF8F00' },
+            font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
+            shape: 'dot',
+            size: 18,
+            nodeType: 'hop',
+            ip: firstDetail?.ip || null,
+            level: hopNumber,
+            y,
+            physics: false,
+            fixed: { x: false, y: true }
+          };
+        }
+        // Aggregated: keep rectangle, move text below
         return {
           id,
-          label,
-          title: `Network Prefix: ${value}\nHop #${hopNumber} • ${dest}\nClick to expand`,
-          color: { background: '#FF9800', border: '#F57C00' },
-          font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
+          label: value,
+          title: `Network Prefix: ${value}\nAggregated ${uniqueIps.size} IPs\nHop #${hopNumber} • ${dest}\nClick to expand`,
+            color: { background: '#FF9800', border: '#F57C00' },
+          font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff', vadjust: 26 },
           shape: 'box',
+          shapeProperties: { borderRadius: 2 },
+          margin: 4,
           size: 20,
           nodeType: 'prefix',
           prefix: value,
@@ -417,15 +469,17 @@ export function buildGraph({
     } else if (type === 'asn') {
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
-        list.forEach(d => addPathMapping(id, `${d.destination}-${d.pathType}`));
+  list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
         const label = value;
         return {
           id,
           label: `🏢 ${label}`,
           title: `ASN: ${value}\nHop #${hopNumber} • ${dest}\nClick to expand`,
           color: { background: '#9C27B0', border: '#7B1FA2' },
-          font: { size: 11, color: '#fff', strokeWidth: 2, strokeColor: '#333' },
+          font: { size: 11, color: '#fff', strokeWidth: 2, strokeColor: '#333', vadjust: 28 },
           shape: 'box',
+          shapeProperties: { borderRadius: 2 },
+          margin: 4,
           size: 22,
           nodeType: 'asn',
           asnGroup: value,
@@ -485,9 +539,8 @@ export function buildGraph({
               : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
           }
         }
-        return (aggregationScope === 'cross-destination')
-          ? `prefix:${prefix}@h:${hopNumber}`
-          : `prefix:${prefix}@d:${destination}@h:${hopNumber}`;
+  // Collapsed hierarchy prefix: unify to earliest hop index
+  return getCollapsedPrefixKey(prefix, hopNumber);
       }
 
       // Timeouts (non-hierarchy)
@@ -527,7 +580,7 @@ export function buildGraph({
     };
 
     // 1) Build raw node id sequence
-    const rawIds = [];
+  const rawIds = [];
     let firstIdPushed = false;
     hops.forEach((hop, idx) => {
       const key = keyForHop(hop, idx);
@@ -556,6 +609,17 @@ export function buildGraph({
       const fromId = seq[i];
       const toId = seq[i + 1];
       addEdgeUsage(fromId, toId, destination, destColor, pathId);
+    }
+
+    // If after compression there is only source + one destination node, record that node to force dot shape later
+    if (seq.length === 2) {
+      const loneNodeId = seq[1];
+      const node = nodes.find(n => n.id === loneNodeId);
+      // Only convert real hop nodes (not prefix/asn/timeout aggregated nodes) to dot
+      if (node && node.nodeType === 'hop' && node.shape !== 'dot') {
+        node.shape = 'dot';
+        node.size = 16; // consistent size
+      }
     }
   });
 

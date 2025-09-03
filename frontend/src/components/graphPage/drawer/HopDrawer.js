@@ -33,6 +33,26 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
     // Get unique destinations and path types
     const destinations = [...new Set(hopData.map(h => h.destination))];
+    const destDomainMap = new Map();
+    hopData.forEach(h => {
+      if (!h || !h.destination) return;
+      if (!destDomainMap.has(h.destination)) {
+        destDomainMap.set(h.destination, h.domainName || null);
+      }
+    });
+    const destinationDomains = Array.from(destDomainMap.entries()).map(([destination, domainName]) => ({ destination, domainName }));
+
+    // Build domain groups: domainName -> destinations[]
+    const domainGroupsMap = new Map();
+    destinationDomains.forEach(({ destination, domainName }) => {
+      const key = domainName || 'Unknown';
+      if (!domainGroupsMap.has(key)) domainGroupsMap.set(key, new Set());
+      domainGroupsMap.get(key).add(destination);
+    });
+    const domainGroups = Array.from(domainGroupsMap.entries()).map(([domainName, destSet]) => ({
+      domainName: domainName === 'Unknown' ? null : domainName,
+      destinations: Array.from(destSet).sort()
+    })).sort((a,b) => (a.domainName||'').localeCompare(b.domainName||''));
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
     const protocols = [...new Set(hopData.map(h => (typeof h.protocol === 'string' ? h.protocol.trim() : h.protocol)).filter(Boolean))];
 
@@ -55,7 +75,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
       hasLoadingGeoData,
       isTimeoutHop,
       hasValidIP,
-      protocols
+  protocols,
+  destinationDomains,
+  domainGroups
     };
   }, [hopData]);
 
@@ -113,11 +135,14 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
 
   const handleHighlightPath = useCallback((hop) => {
-    const pathId = `${hop.destination}-${hop.pathType}`;
+    if (!hop) return;
+    // Prefer the stable hashed pathId generated in graphBuilder; fallback to legacy format
+    const pathId = hop.pathId || `${hop.destination}-${hop.pathType}`;
+    if (!pathId) return;
     if (typeof onHighlightPath === 'function') {
       onHighlightPath(pathId);
     } else {
-      // Fallback: broadcast event (NetworkGraph can listen to this)
+      // Fallback: broadcast event (NetworkGraph listens for this custom event)
       window.dispatchEvent(new CustomEvent('graph:highlightPath', { detail: { pathId } }));
     }
   }, [onHighlightPath]);
@@ -209,7 +234,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hopData: processedHops, ipGeoData: existingGeoData, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP, destinationDomains, domainGroups } = processedHopData;
 
   return (
     <div
@@ -339,9 +364,24 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             borderRadius: '6px',
             border: '1px solid #bee5eb'
           }}>
-            <div style={{ marginBottom: '10px' }}>
-              <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
+            <div style={{ marginBottom: '6px' }}>
+              <strong>Destinations IP:</strong> {destinationDomains.map(dd => dd.destination).join(', ')}
             </div>
+            {destinationDomains.some(dd => dd.domainName) && (
+              <div style={{ marginBottom: '10px' }}>
+                <strong>Destination Domain{new Set(destinationDomains.filter(dd=>dd.domainName).map(dd=>dd.domainName)).size>1?'s':''}:</strong> {
+                  Array.from(new Set(destinationDomains
+                    .filter(dd => dd.domainName)
+                    .map(dd => dd.domainName)
+                  )).join(', ')
+                }
+              </div>
+            )}
+            {domainGroups.length > 1 && (
+              <div style={{ marginBottom: '10px' }}>
+                <strong>Domain Groups:</strong> {domainGroups.map(g => `${g.domainName || 'Unknown'} [${g.destinations.length}]`).join(' • ')}
+              </div>
+            )}
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
@@ -870,7 +910,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                     {hop.pathType}
                   </span>
                   <span style={{ fontWeight: 'bold', color: '#2c3e50' }}>
-                    → {hop.destination}
+                    → {hop.destination}{hop.domainName ? ` (${hop.domainName})` : ''}
                   </span>
                 </div>
                 <button

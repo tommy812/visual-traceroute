@@ -55,6 +55,16 @@ const dataRepository = {
     }
     return transformAndValidate(rawRuns, opts);
   },
+  
+  fetchAndCacheAggregated: async (params) => {
+    const aggregated = await apiService.getAggregatedPaths({
+      destinations: params.destinations,
+      protocols: params.selectedProtocols,
+      start_date: params.start_date,
+      end_date: params.end_date
+    });
+    return aggregated; // already aggregated shape
+  },
 
   // Background prefetch for the last 30 days; no-op if already covered
   prefetchLast30Days: async (destinations = []) => {

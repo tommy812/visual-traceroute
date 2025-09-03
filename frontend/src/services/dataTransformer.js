@@ -6,36 +6,14 @@ class DataTransformer {
    * @returns {Object} - Transformed data in frontend format
    */
   transformNetworkData(rawData, opts = {}) {
-    if (!rawData || !Array.isArray(rawData) || rawData.length === 0) {
-      return {};
-    }
-
-    const {
-      aggregationMode = 'destination', // 'destination', 'none', 'asn', 'prefix'
-      aggregationScope = 'per-destination', // 'per-destination', 'cross-destination'
-      selectedProtocols = [],
-      minRTT = null,
-      maxRTT = null,
-      minUsagePercent = null
-    } = opts;
-
-    // Apply initial filtering if specified
-    let filteredRuns = this.applyInitialFilters(rawData, { selectedProtocols, minRTT, maxRTT });
-
-    // Handle different aggregation modes
-    switch (aggregationMode) {
-      case 'none':
-        return this.transformWithNoAggregation(filteredRuns, opts);
-      case 'asn':
-        return this.transformWithAsnAggregation(filteredRuns, opts);
-      case 'prefix':
-        return this.transformWithPrefixAggregation(filteredRuns, opts);
-      case 'destination':
-      default:
-        // Traditional destination-based aggregation (current behavior)
-        return this.transformWithDestinationAggregation(filteredRuns, opts);
-    }
+  if (!rawData || typeof rawData !== 'object') return {};
+  // If backend already supplied aggregated shape just return
+  const firstVal = Object.values(rawData)[0];
+  if (firstVal && firstVal.protocol_groups) return rawData;
+  // fallback old behavior
+  return this.transformWithDestinationAggregation(rawData, opts);
   }
+
 
   /**
    * Group trace runs by destination

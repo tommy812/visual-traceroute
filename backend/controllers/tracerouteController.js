@@ -1,4 +1,5 @@
 const { supabase } = require('../config/database');
+const { aggregatedPathsCache } = require('../cache/aggregatedCache');
 
 class TracerouteController {
   // Get all traceroute methods
@@ -368,32 +369,450 @@ class TracerouteController {
     }
   }
 
-  // Health check for the controller
-  async healthCheck(req, res) {
+  async getAggregatedPaths(req, res) {
     try {
-      const { count, error } = await supabase
-        .from('traceroute_methods')
-        .select('*', { count: 'exact', head: true });
+      console.time('getAggregatedPaths');
+      const { destinations, protocols, start_date, end_date, fastest, shortest, debug } = req.query;
+  const self = this; // defensive reference
 
-      if (error) {
-        throw error;
+      // Accept both numeric destination IDs and address strings; resolve addresses to IDs
+      let destIds = null;
+      let unresolvedAddresses = [];
+      if (destinations) {
+  const rawItems = destinations.split(',');
+  // Drop malformed tokens like 'destinations=2491'
+  const items = rawItems.map(s => s.trim()).filter(t => t && !t.includes('='));
+        const numericIds = items.filter(v => /^\d+$/.test(v)).map(v => parseInt(v, 10));
+        const addrCandidates = items.filter(v => !/^\d+$/.test(v));
+        // Filter out entries that look like invalid hostnames quickly (allow dots / letters / hyphens)
+        const addressItems = addrCandidates.filter(v => /[a-zA-Z]/.test(v));
+        unresolvedAddresses = addressItems;
+        let resolvedIds = [];
+        if (addressItems.length) {
+          const { data: destRows, error: destErr } = await supabase
+            .from('destinations')
+            .select('id,address')
+            .in('address', addressItems);
+          if (destErr) throw destErr;
+            resolvedIds = (destRows || []).map(r => r.id);
+          // Track which addresses failed to resolve
+          unresolvedAddresses = addressItems.filter(a => !destRows.find(r => r.address === a));
+        }
+        destIds = [...numericIds, ...resolvedIds];
+        if (!destIds.length) destIds = null; // if nothing resolved keep null
+      }
+      const protoList = protocols
+        ? protocols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+        : null;
+
+      const { data: groups, error } = await supabase.rpc('get_aggregated_paths', {
+        p_destination_ids: destIds,
+        p_protocols: protoList,
+        p_start: start_date || null,
+        p_end: end_date || null
+      });
+      if (error) throw error;
+  const debugInfo = debug ? { input: { destinations, resolved_destination_ids: destIds, unresolved_addresses: unresolvedAddresses, protocols: protoList, start_date, end_date }, rpc_group_count: groups?.length || 0 } : undefined;
+
+      // If empty, still return JSON (maybe filters too restrictive or underlying view has no data)
+      if (!groups || groups.length === 0) {
+        console.warn('[getAggregatedPaths] RPC returned 0 rows', debugInfo || '');
+        return res.json({ success: true, data: {}, debug: debugInfo });
+      }
+      // Organize by destination
+      const byDest = new Map();
+      (groups || []).forEach(row => {
+        const dest = row.destination_id;
+        if (!byDest.has(dest)) byDest.set(dest, []);
+        byDest.get(dest).push(row);
+      });
+
+      // Cache key (exclude debug param)
+      const cacheKey = aggregatedPathsCache.makeKey({
+        destIds,
+        protocols: protoList,
+        start: start_date,
+        end: end_date,
+        fastest: Boolean(fastest),
+        shortest: Boolean(shortest)
+      });
+
+      // Serve from cache if available and not requesting debug forced miss
+      if (!debug) {
+        const cached = aggregatedPathsCache.get(cacheKey);
+        if (cached) {
+          console.timeEnd('getAggregatedPaths');
+          return res.json({ success: true, data: cached, cached: true });
+        }
       }
 
-      res.json({
-        success: true,
-        message: 'Traceroute controller is healthy',
-        database_status: 'connected',
-        methods_count: count || 0
-      });
-    } catch (error) {
-      console.error('Health check failed:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Health check failed',
-        details: error.message
-      });
+      const result = {};
+      // Build destination id => address map for all destinations appearing in groups
+      const allDestIds = Array.from(byDest.keys());
+      let destAddressMap = new Map();
+      if (allDestIds.length) {
+        const { data: destRows, error: destRowsErr } = await supabase
+          .from('destinations')
+          .select('id,address')
+          .in('id', allDestIds);
+        if (destRowsErr) throw destRowsErr;
+        destAddressMap = new Map((destRows || []).map(r => [r.id, r.address]));
+      }
+
+  for (const [destId, rows] of byDest.entries()) {
+        // Group by protocol
+        const protoMap = new Map();
+        rows.forEach(r => {
+          const p = r.protocol || 'UNKNOWN';
+          if (!protoMap.has(p)) protoMap.set(p, []);
+          protoMap.get(p).push(r);
+        });
+
+        let primary_path = null;
+        let alternatives = [];
+        const allProtoPaths = []; // collect for global fastest/shortest selection
+        const protocol_groups = {};
+
+        for (const [proto, list] of protoMap.entries()) {
+          // Rank
+          list.sort((a, b) => {
+            if (b.run_count !== a.run_count) return b.run_count - a.run_count;
+            if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+            if (a.hop_count !== b.hop_count) return a.hop_count - b.hop_count;
+            return a.signature.localeCompare(b.signature);
+          });
+
+          // Identify fastest & shortest if requested
+          const fastestPath = fastest
+            ? [...list].sort((a, b) => {
+              if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+              if (a.run_count !== b.run_count) return b.run_count - a.run_count;
+              return a.hop_count - b.hop_count;
+            })[0]
+            : null;
+
+          const shortestPath = shortest
+            ? [...list].sort((a, b) => {
+              if (a.hop_count !== b.hop_count) return a.hop_count - b.hop_count;
+              if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+              return b.run_count - a.run_count;
+            })[0]
+            : null;
+
+          const primary = list[0];
+          const totalProtoRuns = list.reduce((s, r) => s + r.run_count, 0);
+
+          const protoPrimaryPath = await self.buildPathObject(primary, totalProtoRuns);
+          const protoAlternatives = await Promise.all(
+            list.slice(1).map(r => self.buildPathObject(r, totalProtoRuns))
+          );
+
+          const fastestObj = (fastestPath && fastestPath.signature !== primary.signature)
+            ? await self.buildPathObject(fastestPath, totalProtoRuns)
+            : null;
+          const shortestObj = (shortestPath && shortestPath.signature !== primary.signature && (!fastestObj || shortestPath.signature !== fastestPath.signature))
+            ? await self.buildPathObject(shortestPath, totalProtoRuns)
+            : null;
+
+          protocol_groups[proto] = {
+            primary_path: protoPrimaryPath,
+            fastest_path: fastestObj,
+            shortest_path: shortestObj,
+            alternatives: protoAlternatives,
+            total_traces: totalProtoRuns
+          };
+
+          if (!primary_path || primary.run_count > primary_path.count) {
+            primary_path = protoPrimaryPath;
+          }
+          alternatives.push(...protoAlternatives);
+
+          // collect for global fastest/shortest
+          allProtoPaths.push({ proto, obj: protoPrimaryPath, raw: primary });
+          if (fastestObj) allProtoPaths.push({ proto, obj: fastestObj, raw: fastestPath });
+          if (shortestObj) allProtoPaths.push({ proto, obj: shortestObj, raw: shortestPath });
+        }
+
+        const totalDestRuns = rows.reduce((s, r) => s + r.run_count, 0);
+
+        // Recompute top-level usage percents
+        if (primary_path) primary_path.percent = +(primary_path.count / totalDestRuns * 100).toFixed(2);
+        alternatives.forEach(a => { a.percent = +(a.count / totalDestRuns * 100).toFixed(2); });
+
+        // Determine fastest / shortest globally
+        const fastestGlobal = [...allProtoPaths].sort((a, b) => {
+          if (a.raw.path_avg_rtt !== b.raw.path_avg_rtt) return a.raw.path_avg_rtt - b.raw.path_avg_rtt;
+          return b.raw.run_count - a.raw.run_count;
+        })[0]?.obj;
+
+        const shortestGlobal = [...allProtoPaths].sort((a, b) => {
+          if (a.raw.hop_count !== b.raw.hop_count) return a.raw.hop_count - b.raw.hop_count;
+          if (a.raw.path_avg_rtt !== b.raw.path_avg_rtt) return a.raw.path_avg_rtt - b.raw.path_avg_rtt;
+          return b.raw.run_count - a.raw.run_count;
+        })[0]?.obj;
+
+        const destAddress = destAddressMap.get(destId) || String(destId);
+        result[destAddress] = {
+          destination_id: destId,
+          primary_path,
+          fastest_path: fastestGlobal && fastestGlobal !== primary_path ? fastestGlobal : null,
+          shortest_path: shortestGlobal &&
+            shortestGlobal !== primary_path &&
+            shortestGlobal !== fastestGlobal ? shortestGlobal : null,
+          alternatives,
+          total_traces: totalDestRuns,
+          protocol_groups
+        };
+  }
+  console.timeEnd('getAggregatedPaths');
+  // Store in cache
+  aggregatedPathsCache.set(cacheKey, result);
+  return res.json({ success: true, data: result, debug: debugInfo, cached: false });
+      
+    } catch (e) {
+      console.error('getAggregatedPaths error:', e);
+      if (e && typeof e.message === 'string' && e.message.includes('invalid input syntax for type inet')) {
+        return res.status(400).json({
+          success: false,
+            error: 'Bad destination filter',
+          details: 'One or more provided destinations are not valid numeric IDs or resolvable addresses.',
+          hint: 'Send numeric destination IDs (preferred) or valid addresses. Avoid passing repeated query keys like destinations=2490,destinations=2491.'
+        });
+      }
+      return res.status(500).json({ success: false, error: 'Aggregation failed', details: e.message });
     }
   }
-}
 
-module.exports = new TracerouteController(); 
+  /**
+   * Internal helper (non-Express) to compute aggregated paths result for caching.
+   * Mirrors getAggregatedPaths core logic but returns the result object directly.
+   */
+  async _computeAggregated({ destIds = null, protoList = null, start_date = null, end_date = null, fastest = false, shortest = false }) {
+    const { data: groups, error } = await supabase.rpc('get_aggregated_paths', {
+      p_destination_ids: destIds && destIds.length ? destIds : null,
+      p_protocols: protoList && protoList.length ? protoList : null,
+      p_start: start_date || null,
+      p_end: end_date || null
+    });
+    if (error) throw error;
+    if (!groups || groups.length === 0) return {};
+
+    const byDest = new Map();
+    groups.forEach(row => {
+      const dest = row.destination_id;
+      if (!byDest.has(dest)) byDest.set(dest, []);
+      byDest.get(dest).push(row);
+    });
+
+    const allDestIds = Array.from(byDest.keys());
+    let destAddressMap = new Map();
+    if (allDestIds.length) {
+      const { data: destRows, error: destRowsErr } = await supabase
+        .from('destinations')
+        .select('id,address')
+        .in('id', allDestIds);
+      if (destRowsErr) throw destRowsErr;
+      destAddressMap = new Map((destRows || []).map(r => [r.id, r.address]));
+    }
+
+    const result = {};
+    for (const [destId, rows] of byDest.entries()) {
+      const protoMap = new Map();
+      rows.forEach(r => {
+        const p = r.protocol || 'UNKNOWN';
+        if (!protoMap.has(p)) protoMap.set(p, []);
+        protoMap.get(p).push(r);
+      });
+      let primary_path = null;
+      let alternatives = [];
+      const allProtoPaths = [];
+      const protocol_groups = {};
+      for (const [proto, list] of protoMap.entries()) {
+        list.sort((a, b) => {
+          if (b.run_count !== a.run_count) return b.run_count - a.run_count;
+            if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+          if (a.hop_count !== b.hop_count) return a.hop_count - b.hop_count;
+          return a.signature.localeCompare(b.signature);
+        });
+        const fastestPath = fastest ? [...list].sort((a, b) => {
+          if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+          if (a.run_count !== b.run_count) return b.run_count - a.run_count;
+          return a.hop_count - b.hop_count;
+        })[0] : null;
+        const shortestPath = shortest ? [...list].sort((a, b) => {
+          if (a.hop_count !== b.hop_count) return a.hop_count - b.hop_count;
+          if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+          return b.run_count - a.run_count;
+        })[0] : null;
+        const primary = list[0];
+        const totalProtoRuns = list.reduce((s, r) => s + r.run_count, 0);
+        const protoPrimaryPath = await this.buildPathObject(primary, totalProtoRuns);
+        const protoAlternatives = await Promise.all(list.slice(1).map(r => this.buildPathObject(r, totalProtoRuns)));
+        const fastestObj = (fastestPath && fastestPath.signature !== primary.signature)
+          ? await this.buildPathObject(fastestPath, totalProtoRuns) : null;
+        const shortestObj = (shortestPath && shortestPath.signature !== primary.signature && (!fastestObj || shortestPath.signature !== fastestPath.signature))
+          ? await this.buildPathObject(shortestPath, totalProtoRuns) : null;
+        protocol_groups[proto] = {
+          primary_path: protoPrimaryPath,
+          fastest_path: fastestObj,
+          shortest_path: shortestObj,
+          alternatives: protoAlternatives,
+          total_traces: totalProtoRuns
+        };
+        if (!primary_path || primary.run_count > primary_path.count) primary_path = protoPrimaryPath;
+        alternatives.push(...protoAlternatives);
+        allProtoPaths.push({ proto, obj: protoPrimaryPath, raw: primary });
+        if (fastestObj) allProtoPaths.push({ proto, obj: fastestObj, raw: fastestPath });
+        if (shortestObj) allProtoPaths.push({ proto, obj: shortestObj, raw: shortestPath });
+      }
+      const totalDestRuns = rows.reduce((s, r) => s + r.run_count, 0);
+      if (primary_path) primary_path.percent = +(primary_path.count / totalDestRuns * 100).toFixed(2);
+      alternatives.forEach(a => { a.percent = +(a.count / totalDestRuns * 100).toFixed(2); });
+      const fastestGlobal = fastest ? [...allProtoPaths].sort((a, b) => {
+        if (a.raw.path_avg_rtt !== b.raw.path_avg_rtt) return a.raw.path_avg_rtt - b.raw.path_avg_rtt;
+        return b.raw.run_count - a.raw.run_count;
+      })[0]?.obj : null;
+      const shortestGlobal = shortest ? [...allProtoPaths].sort((a, b) => {
+        if (a.raw.hop_count !== b.raw.hop_count) return a.raw.hop_count - b.raw.hop_count;
+        if (a.raw.path_avg_rtt !== b.raw.path_avg_rtt) return a.raw.path_avg_rtt - b.raw.path_avg_rtt;
+        return b.raw.run_count - a.raw.run_count;
+      })[0]?.obj : null;
+      const destAddress = destAddressMap.get(destId) || String(destId);
+      result[destAddress] = {
+        destination_id: destId,
+        primary_path,
+        fastest_path: fastestGlobal && fastestGlobal !== primary_path ? fastestGlobal : null,
+        shortest_path: shortestGlobal && shortestGlobal !== primary_path && shortestGlobal !== fastestGlobal ? shortestGlobal : null,
+        alternatives,
+        total_traces: totalDestRuns,
+        protocol_groups
+      };
+    }
+    return result;
+  }
+
+  /** Pre-warm cache at startup or via manual trigger */
+  async prewarmAggregatedPaths({ destinations, protocols, lookbackMinutes = 60, fastest = false, shortest = false } = {}) {
+    try {
+      const destIds = Array.isArray(destinations)
+        ? destinations.map(d => parseInt(d, 10)).filter(n => !isNaN(n))
+        : (typeof destinations === 'string' && destinations.trim() ? destinations.split(',').map(d => parseInt(d, 10)).filter(n => !isNaN(n)) : null);
+      const protoList = Array.isArray(protocols)
+        ? protocols.map(p => String(p).trim().toUpperCase()).filter(Boolean)
+        : (typeof protocols === 'string' && protocols.trim() ? protocols.split(',').map(p => p.trim().toUpperCase()).filter(Boolean) : null);
+      const end = new Date();
+      const start = new Date(end.getTime() - lookbackMinutes * 60 * 1000);
+      const start_iso = start.toISOString();
+      const end_iso = end.toISOString();
+      const key = aggregatedPathsCache.makeKey({ destIds, protocols: protoList, start: start_iso, end: end_iso, fastest, shortest });
+      const existing = aggregatedPathsCache.get(key);
+      if (existing) return { cached: true, key };
+      const computed = await this._computeAggregated({ destIds, protoList, start_date: start_iso, end_date: end_iso, fastest, shortest });
+      aggregatedPathsCache.set(key, computed);
+      return { cached: false, key, count: Object.keys(computed).length };
+    } catch (e) {
+      console.error('Prewarm failed:', e.message);
+      return { error: e.message };
+    }
+  }
+
+  async handlePrewarm(req, res) {
+    try {
+      const token = process.env.PREWARM_TOKEN;
+      if (token) {
+        const provided = req.headers['x-prewarm-token'] || req.query.token;
+        if (provided !== token) return res.status(401).json({ success: false, error: 'Unauthorized' });
+      }
+      const { destinations, protocols, lookback_minutes, fastest, shortest } = req.body || req.query;
+      const result = await this.prewarmAggregatedPaths({
+        destinations,
+        protocols,
+        lookbackMinutes: lookback_minutes ? parseInt(lookback_minutes, 10) : 60,
+        fastest: Boolean(fastest),
+        shortest: Boolean(shortest)
+      });
+      res.json({ success: !result.error, data: result });
+    } catch (e) {
+      res.status(500).json({ success: false, error: 'Prewarm failed', details: e.message });
+    }
+  }
+
+  // Helper: convert aggregated row to frontend path object
+   async buildPathObject(row, totalRunsForPercent) {
+      if (!row) return null;
+      const sampleRun = row.sample_run_ids?.[0];
+      let path = [];
+      let runTimestamp = null;
+      if (sampleRun) {
+        const { data: hopsData, error: hopsErr } = await supabase
+          .from('hops')
+          .select('hop_number, ip, hostname, rtt1, rtt2, rtt3')
+          .eq('trace_run_id', sampleRun)
+          .order('hop_number');
+        if (hopsErr) throw hopsErr;
+        // fetch representative run timestamp so frontend date-range filter keeps it
+        const { data: runMeta, error: runErr } = await supabase
+          .from('trace_runs')
+          .select('timestamp')
+          .eq('id', sampleRun)
+          .single();
+        if (runErr) {
+          // non-fatal; leave timestamp null
+          console.warn('Failed to fetch timestamp for run', sampleRun, runErr.message);
+        } else {
+          runTimestamp = runMeta?.timestamp || null;
+        }
+        path = (hopsData || []).map(h => ({
+          hop_number: h.hop_number,
+          ip: h.ip,
+          hostname: h.hostname,
+          rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
+          is_timeout: !h.ip,
+          protocol: row.protocol
+        }));
+      }
+      const percent = totalRunsForPercent
+        ? +(row.run_count / totalRunsForPercent * 100).toFixed(2)
+        : 0;
+      return {
+        path,
+        count: row.run_count,
+        percent,
+        avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
+        timeStamp: runTimestamp || new Date().toISOString(),
+        protocol: row.protocol
+      };
+    }
+
+
+
+
+  // Health check for the controller
+  async healthCheck(req, res) {
+      try {
+        const { count, error } = await supabase
+          .from('traceroute_methods')
+          .select('*', { count: 'exact', head: true });
+
+        if (error) {
+          throw error;
+        }
+
+        res.json({
+          success: true,
+          message: 'Traceroute controller is healthy',
+          database_status: 'connected',
+          methods_count: count || 0
+        });
+      } catch (error) {
+        console.error('Health check failed:', error);
+        res.status(500).json({
+          success: false,
+          error: 'Health check failed',
+          details: error.message
+        });
+      }
+    }
+  }
+
+      module.exports = new TracerouteController(); 

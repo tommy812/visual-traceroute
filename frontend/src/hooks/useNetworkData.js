@@ -12,9 +12,12 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     if (selectedDestinations.length === 0) return null;
     
     // Convert destination objects to strings for API
-    const destinationStrings = selectedDestinations.map(dest => 
-      typeof dest === 'string' ? dest : dest.address
-    );
+    // Prefer numeric destination IDs for backend aggregation; fallback to address if id missing
+    const destinationStrings = selectedDestinations.map(dest => {
+      if (typeof dest === 'string') return dest; // legacy string
+      if (dest && dest.id != null) return String(dest.id); // numeric id
+      return dest?.address; // fallback
+    }).filter(Boolean);
     
     const params = {
       destinations: destinationStrings,
@@ -52,7 +55,7 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
       }
 
       // 2) Fetch and cache from backend (stale-while-revalidate)
-      const fresh = await dataRepository.fetchAndCacheNetworkData(fetchParams);
+      const fresh = await dataRepository.fetchAndCacheAggregated(fetchParams);
       setPathData(fresh);
       setLastFetchParams(fetchParams);
 
