@@ -247,6 +247,7 @@ export function buildGraph({
           hostname: hop?.hostname ?? (hop?.ip ?? 'Timeout'),
           rtt_ms: hop?.rtt_ms ?? [],
           destination,
+          domainName: destData?.domain?.name || null,          // <--- add
           hopNumber,
           pathType: type,
           is_timeout: !hop || hop.is_timeout || !hop.ip,
@@ -258,7 +259,7 @@ export function buildGraph({
           pathAvgRtt: pathObj?.avg_rtt ?? null,
           pathCount: pathObj?.count ?? null,
           totalTraces: destData?.total_traces ?? null,
-          pathLength: hops.length
+          pathId
         });
       });
     };
@@ -570,9 +571,8 @@ export function buildGraph({
     const destinationLines = Array.from(usage.destinations).map(d => {
       const dom =
         filteredData?.[d]?.domain?.name ||
-        filteredData?.[d]?.domain_name ||
         filteredData?.[d]?.domainName ||
-        '';
+        null;
       return dom ? `${d} (${dom})` : d;
     });
     const destinationsBlock = destinationLines.length
