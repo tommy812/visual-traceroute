@@ -7,6 +7,7 @@ class AggregatedPathsCache {
     this.maxEntries = maxEntries;
     this.ttlMs = ttlMs;
     this.map = new Map(); // key -> { value, expiresAt }
+  this.stats = { hits: 0, misses: 0, stores: 0, evictions: 0, prunes: 0 };
   }
 
   _now() { return Date.now(); }
@@ -14,7 +15,10 @@ class AggregatedPathsCache {
   _pruneExpired() {
     const now = this._now();
     for (const [k, v] of this.map.entries()) {
-      if (v.expiresAt <= now) this.map.delete(k);
+      if (v.expiresAt <= now) {
+        this.map.delete(k);
+        this.stats.prunes++;
+      }
     }
   }
 
@@ -25,6 +29,7 @@ class AggregatedPathsCache {
     let i = 0;
     for (const key of this.map.keys()) {
       this.map.delete(key);
+  this.stats.evictions++;
       if (++i >= over) break;
     }
   }
@@ -38,21 +43,28 @@ class AggregatedPathsCache {
   get(key) {
     this._pruneExpired();
     const entry = this.map.get(key);
-    if (!entry) return null;
-    if (entry.expiresAt <= this._now()) { this.map.delete(key); return null; }
+  if (!entry) { this.stats.misses++; return null; }
+  if (entry.expiresAt <= this._now()) { this.map.delete(key); this.stats.misses++; return null; }
     // Touch entry (re-insert to maintain recent usage ordering)
     this.map.delete(key);
     this.map.set(key, entry);
+  this.stats.hits++;
+  if (process.env.CACHE_DEBUG === '1') console.log('[aggregatedPathsCache] HIT', key);
     return entry.value;
   }
 
   set(key, value) {
     const expiresAt = this._now() + this.ttlMs;
     this.map.set(key, { value, expiresAt });
+  this.stats.stores++;
+  if (process.env.CACHE_DEBUG === '1') console.log('[aggregatedPathsCache] STORE', key);
     this._evictIfNeeded();
   }
 
   clear() { this.map.clear(); }
+  getStats() {
+    return { ...this.stats, size: this.map.size, ttlMs: this.ttlMs, maxEntries: this.maxEntries };
+  }
 }
 
 // Singleton instance (configurable via env vars)

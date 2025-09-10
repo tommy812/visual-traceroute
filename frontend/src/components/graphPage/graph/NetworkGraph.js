@@ -79,7 +79,8 @@ const NetworkGraph = React.memo(({
   maxRTT = '',
   minUsagePercent = '',
   selectedPathTypes = ['PRIMARY', 'ALTERNATIVE'],
-  selectedProtocols = []
+  selectedProtocols = [],
+  hideTimeouts = false
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
@@ -97,13 +98,16 @@ const NetworkGraph = React.memo(({
   const graphContainerRef = useRef(null); // Ref for capturing the graph
   const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
   const networkRef = useRef(null);
+ 
+
   const { filteredData: filteredByHook } = useGraphData(pathData, {
     minRTT,
     maxRTT,
     minUsagePercent,
     selectedPathTypes,
     showPrimaryOnly,
-    selectedProtocols
+    selectedProtocols,
+    hideTimeouts
   });
 
 
@@ -193,9 +197,10 @@ const NetworkGraph = React.memo(({
       maxRTT,
       minUsagePercent,
       selectedPathTypes.sort().join(','),
-      (selectedProtocols && selectedProtocols.length
-       ? selectedProtocols.slice().sort().join(',')
-       : 'ALL'),          
+  (selectedProtocols && selectedProtocols.length
+   ? selectedProtocols.slice().sort().join(',')
+   : 'ALL'),
+  hideTimeouts.toString(),          
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
@@ -207,7 +212,7 @@ const NetworkGraph = React.memo(({
       Array.from(expandedAsnGroups).sort().join(',')
     ];
     return keyParts.join('|');
- }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups]);
+ }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups]);
 
 
 
@@ -286,6 +291,7 @@ const NetworkGraph = React.memo(({
           node: function (values, id, selected, hovering) {
             values.borderColor = '#2196F3';
             values.borderWidth = 2;
+            
           }
         }
       },
@@ -296,7 +302,7 @@ const NetworkGraph = React.memo(({
         selectConnectedEdges: false
       },
       configure: { enabled: false },
-      layout: { improvedLayout: false }
+      layout: { improvedLayout: true }
     };
 
     switch (layoutOptimization) {
@@ -308,20 +314,20 @@ const NetworkGraph = React.memo(({
               enabled: true,
               direction: "LR",
               sortMethod: "directed",
-              shakeTowards: "leaves",
-              nodeSpacing: 80,
-              treeSpacing: 60,
-              levelSeparation: 250,
-              blockShifting: false,
+              shakeTowards: "root",
+              nodeSpacing: 60,
+              treeSpacing: 4000,
+              levelSeparation: 320,
+              blockShifting: true,
               edgeMinimization: true,
-              parentCentralization: false
+              parentCentralization: true
             }
           },
           physics: { enabled: false },
           edges: {
             smooth: {
-              type: "continuous",
-              roundness: 0.1,
+              type: "cubicBezier",
+              roundness: 0.35,
               forceDirection: "horizontal"
             },
             chosen: false
@@ -337,12 +343,12 @@ const NetworkGraph = React.memo(({
               direction: "LR",
               sortMethod: "directed",
               shakeTowards: "leaves",
-              nodeSpacing: 120,
-              treeSpacing: 100,
-              levelSeparation: 300,
-              blockShifting: false,
+              nodeSpacing: 90,
+              treeSpacing: 40,
+              levelSeparation: 320,
+              blockShifting: true,
               edgeMinimization: true,
-              parentCentralization: false
+              parentCentralization: true
             }
           },
           physics: { enabled: false },

@@ -193,18 +193,21 @@ export function buildGraph({
       // Collect details keyed by the final rendering key
       hops.forEach((hop, idx) => {
         const hopNumber = hop?.hop_number ?? (idx + 1);
-        let key;
+  let key;
+  const aggregateTimeouts = (aggregationMode !== 'none') || (networkHierarchy !== 'none');
 
         if (!hop || hop.is_timeout || !hop.ip) {
           // Timeout nodes handling
           if (aggregationMode === 'none') {
             key = `timeout@d:${destination}@h:${hopNumber}@p:${pathId}`;
           } else if (aggregationMode === 'shared-ips') {
+            // In shared-ips mode, aggregate timeouts ONLY within the same destination
+            key = `timeout@d:${destination}@h:${hopNumber}`;
+          } else if (aggregateTimeouts) {
+            // Other aggregation modes (asn/prefix or hierarchy) keep cross-destination aggregation by hop
             key = `timeout@h:${hopNumber}`;
           } else {
-            key = (aggregationScope === 'cross-destination')
-              ? `timeout@h:${hopNumber}`
-              : `timeout@d:${destination}@h:${hopNumber}`;
+            key = `timeout@d:${destination}@h:${hopNumber}`;
           }
         } else if (!isIPv6(hop.ip)) {
           // If anything non-IPv6 sneaks in, treat as timeout-like to avoid mixing
@@ -253,7 +256,6 @@ export function buildGraph({
               : `ip:${hop.ip}@d:${destination}@h:${hopNumber}`;
           }
         }
-        const destDomainName = destData?.domain?.name || destData?.domainName || null;
 
         if (!detailsByKey.has(key)) detailsByKey.set(key, []);
         detailsByKey.get(key).push({
@@ -261,7 +263,7 @@ export function buildGraph({
           hostname: hop?.hostname ?? (hop?.ip ?? 'Timeout'),
           rtt_ms: hop?.rtt_ms ?? [],
           destination,
-          domainName: destDomainName,        
+          domainName: destData?.domain?.name || null,          // <--- add
           hopNumber,
           pathType: type,
           is_timeout: !hop || hop.is_timeout || !hop.ip,
@@ -284,20 +286,7 @@ export function buildGraph({
     }
   });
 
-  // Source node
-  const sourceId = addNodeOnce('source', (id) => ({
-    id,
-    label: 'Source',
-    title: 'Starting point',
-    color: { background: '#97C2FC', border: '#2B7CE9' },
-    font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
-    shape: 'dot',
-    size: 18,
-    nodeType: 'source',
-    level: 0,
-    physics: false,
-    fixed: { x: false, y: true }
-  }));
+  // Source node removed: paths now start from the first hop present in data.
 
   // Pass 1.5: Apply prefix aggregation if enabled (or hierarchy forces it)
   let finalDetailsByKey = new Map(detailsByKey);
@@ -369,31 +358,23 @@ export function buildGraph({
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
         const isMaxTtl = hopNumber === 30;
-        // Aggregation insight: number of unique paths & destinations represented by this timeout node
-        const uniquePaths = new Set(list.map(d => d.pathId).filter(Boolean));
-        const uniqueDests = new Set(list.map(d => d.destination).filter(Boolean));
-        const pathCount = uniquePaths.size;
-        const destCount = uniqueDests.size;
-        const aggregated = pathCount > 1 || destCount > 1;
-        const dynamicLabel = aggregated ? `⏱ ${pathCount}` : '⏱️';
-        const dynamicSize = aggregated ? Math.min(16 + (pathCount - 1) * 2, 32) : 16;
+        const uniqueDestCount = new Set(list.map(d => d.destination).filter(Boolean)).size;
+        const uniquePathCount = new Set(list.map(d => d.pathId).filter(Boolean)).size;
+        const aggregated = uniqueDestCount > 1 || uniquePathCount > 1;
         return {
           id,
-          label: dynamicLabel,
-          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber} • ${dest}` + (aggregated ? `\nAggregated: ${pathCount} path${pathCount!==1?'s':''} across ${destCount} destination${destCount!==1?'s':''}` : ''),
+          label: aggregated ? `⏱️×${uniqueDestCount || uniquePathCount}` : '⏱️',
+          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber}\n${aggregated ? `Destinations: ${uniqueDestCount} • Paths: ${uniquePathCount}` : dest}`,
           color: { background: '#F44336', border: '#D32F2F' },
           font: { size: 12, color: '#FFF', strokeWidth: 2, strokeColor: '#fff' },
           shape: 'dot',
-          size: dynamicSize,
+          size: 16,
           nodeType: 'timeout',
           timeoutKey: key,
-          aggregatedTimeout: aggregated,
-          timeoutPaths: Array.from(uniquePaths),
-          timeoutDestinations: Array.from(uniqueDests),
           level: hopNumber,
-          y,
+          
           physics: false,
-          fixed: { x: false, y: true }
+          fixed: { x: false, y: false }
         };
       });
     } else if (type === 'ip') {
@@ -406,7 +387,7 @@ export function buildGraph({
           id,
           label: display,
           title: `IP: ${value}\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
-          color: { background: '#FFA726', border: isTerminal ? '#2ECC71' : '#FF8F00' },
+          color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
           font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
           shape: isTerminal ? 'box' : 'dot',
           size: 18,
@@ -415,9 +396,9 @@ export function buildGraph({
           // Provide parentPrefix so expanded hierarchy groups can be collapsed via UI / double-click
           parentPrefix: networkHierarchy !== 'none' ? getHierarchyPrefix(value, networkHierarchy, dataTransformer) : null,
           level: hopNumber,
-          y,
+          
           physics: false,
-          fixed: { x: false, y: true }
+          fixed: { x: false, y: false }
         };
       });
     } else if (type === 'prefix') {
@@ -442,9 +423,9 @@ export function buildGraph({
             nodeType: 'hop',
             ip: firstDetail?.ip || null,
             level: hopNumber,
-            y,
+            
             physics: false,
-            fixed: { x: false, y: true }
+            fixed: { x: false, y: false }
           };
         }
         // Aggregated: keep rectangle, move text below
@@ -461,9 +442,9 @@ export function buildGraph({
           nodeType: 'prefix',
           prefix: value,
           level: hopNumber,
-          y,
+          
           physics: false,
-          fixed: { x: false, y: true }
+          fixed: { x: false, y: false }
         };
       });
     } else if (type === 'asn') {
@@ -484,9 +465,9 @@ export function buildGraph({
           nodeType: 'asn',
           asnGroup: value,
           level: hopNumber,
-          y,
+          
           physics: false,
-          fixed: { x: false, y: true }
+          fixed: { x: false, y: false }
         };
       });
     }
@@ -515,10 +496,13 @@ export function buildGraph({
       // Network hierarchy first (IPv6-only)
       if (networkHierarchy !== 'none') {
         if (!hop || hop.is_timeout || !hop.ip) {
-          const base = (aggregationScope === 'cross-destination')
-            ? `timeout@h:${hopNumber}`
-            : `timeout@d:${destination}@h:${hopNumber}`;
-        return resolveTimeoutKey(base);
+          // Even when hierarchy is active, honor shared-ips requirement: per-destination timeout grouping
+          const base = (aggregationMode === 'shared-ips')
+            ? `timeout@d:${destination}@h:${hopNumber}`
+            : ((aggregationScope === 'cross-destination')
+                ? `timeout@h:${hopNumber}`
+                : `timeout@d:${destination}@h:${hopNumber}`);
+          return resolveTimeoutKey(base);
         }
         if (!isIPv6(hop.ip)) {
           const base = (aggregationScope === 'cross-destination')
@@ -548,7 +532,8 @@ export function buildGraph({
         if (aggregationMode === 'none') {
           return resolveTimeoutKey(`timeout@d:${destination}@h:${hopNumber}`);
         } else if (aggregationMode === 'shared-ips') {
-          return `timeout@h:${hopNumber}`;
+          // For shared-ips, timeouts are per-destination even though IP nodes are cross-destination
+          return `timeout@d:${destination}@h:${hopNumber}`;
         } else {
           return (aggregationScope === 'cross-destination')
             ? `timeout@h:${hopNumber}`
@@ -599,21 +584,16 @@ export function buildGraph({
       }
     });
 
-    // 3) Prepend sourceId if first hop id is different (normally yes)
-    if (seq.length === 0 || seq[0] !== sourceId) {
-      seq.unshift(sourceId);
-    }
-
-    // 4) Add edges along the compressed sequence
+    // 3) Add edges along the compressed sequence (start from first hop)
     for (let i = 0; i < seq.length - 1; i++) {
       const fromId = seq[i];
       const toId = seq[i + 1];
       addEdgeUsage(fromId, toId, destination, destColor, pathId);
     }
 
-    // If after compression there is only source + one destination node, record that node to force dot shape later
-    if (seq.length === 2) {
-      const loneNodeId = seq[1];
+    // If after compression there is only one node in the path, ensure it's rendered as a dot
+    if (seq.length === 1) {
+      const loneNodeId = seq[0];
       const node = nodes.find(n => n.id === loneNodeId);
       // Only convert real hop nodes (not prefix/asn/timeout aggregated nodes) to dot
       if (node && node.nodeType === 'hop' && node.shape !== 'dot') {

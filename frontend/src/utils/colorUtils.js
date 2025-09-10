@@ -27,7 +27,7 @@ export function colorForKey(key, saturation = 65, lightness = 55) {
 }
 
 export const pathHighlightColors = [
-  "#FF6B35", "#004E89", "#009639", "#7209B7", "#FF1654",
+  "#FF6B35", "#004E89", "#960000ff", "#7209B7", "#FF1654",
   "#FF8500", "#0FA3B1", "#B5179E", "#F72585", "#4361EE"
 ];
 

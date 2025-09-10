@@ -33,26 +33,6 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
     // Get unique destinations and path types
     const destinations = [...new Set(hopData.map(h => h.destination))];
-    const destDomainMap = new Map();
-    hopData.forEach(h => {
-      if (!h || !h.destination) return;
-      if (!destDomainMap.has(h.destination)) {
-        destDomainMap.set(h.destination, h.domainName || null);
-      }
-    });
-    const destinationDomains = Array.from(destDomainMap.entries()).map(([destination, domainName]) => ({ destination, domainName }));
-
-    // Build domain groups: domainName -> destinations[]
-    const domainGroupsMap = new Map();
-    destinationDomains.forEach(({ destination, domainName }) => {
-      const key = domainName || 'Unknown';
-      if (!domainGroupsMap.has(key)) domainGroupsMap.set(key, new Set());
-      domainGroupsMap.get(key).add(destination);
-    });
-    const domainGroups = Array.from(domainGroupsMap.entries()).map(([domainName, destSet]) => ({
-      domainName: domainName === 'Unknown' ? null : domainName,
-      destinations: Array.from(destSet).sort()
-    })).sort((a,b) => (a.domainName||'').localeCompare(b.domainName||''));
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
     const protocols = [...new Set(hopData.map(h => (typeof h.protocol === 'string' ? h.protocol.trim() : h.protocol)).filter(Boolean))];
 
@@ -75,9 +55,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
       hasLoadingGeoData,
       isTimeoutHop,
       hasValidIP,
-  protocols,
-  destinationDomains,
-  domainGroups
+      protocols
     };
   }, [hopData]);
 
@@ -234,7 +212,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP, destinationDomains, domainGroups } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
 
   return (
     <div
@@ -364,24 +342,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             borderRadius: '6px',
             border: '1px solid #bee5eb'
           }}>
-            <div style={{ marginBottom: '6px' }}>
-              <strong>Destinations IP:</strong> {destinationDomains.map(dd => dd.destination).join(', ')}
+            <div style={{ marginBottom: '10px' }}>
+              <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
             </div>
-            {destinationDomains.some(dd => dd.domainName) && (
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Destination Domain{new Set(destinationDomains.filter(dd=>dd.domainName).map(dd=>dd.domainName)).size>1?'s':''}:</strong> {
-                  Array.from(new Set(destinationDomains
-                    .filter(dd => dd.domainName)
-                    .map(dd => dd.domainName)
-                  )).join(', ')
-                }
-              </div>
-            )}
-            {domainGroups.length > 1 && (
-              <div style={{ marginBottom: '10px' }}>
-                <strong>Domain Groups:</strong> {domainGroups.map(g => `${g.domainName || 'Unknown'} [${g.destinations.length}]`).join(' • ')}
-              </div>
-            )}
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
@@ -873,66 +836,81 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               </select>
             </label>
 
-            {/* Per-run toggle */}
-            <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <input
-                type="checkbox"
-                checked={showPerRun}
-                onChange={(e) => setShowPerRun(e.target.checked)}
-              />
-              Per-run entries
-            </label>
-          </div>
+              {/* Per-run toggle */}
+                  <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <input
+                    type="checkbox"
+                    checked={showPerRun}
+                    onChange={(e) => setShowPerRun(e.target.checked)}
+                    />
+                    Per-run entries
+                  </label>
+                  </div>
 
-
-
-          {visibleHops.map((hop, index) => (
-            <div key={index} style={{
-              background: '#f8f9fa',
-              padding: '15px',
-              borderRadius: '6px',
-              border: '1px solid #e0e0e0',
-              marginBottom: '15px'
-            }}>
-
-
-              {/* Path Header */}
-              <div style={{ marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '10px', justifyContent: 'space-between' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{
-                    background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
-                    color: 'white',
-                    padding: '4px 8px',
-                    borderRadius: '4px',
-                    fontSize: '12px',
-                    fontWeight: 'bold'
+                  {visibleHops.map((hop, index) => (
+                  <div key={index} style={{
+                    background: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '6px',
+                    border: '1px solid #e0e0e0',
+                    marginBottom: '15px'
                   }}>
-                    {hop.pathType}
-                  </span>
-                  <span style={{ fontWeight: 'bold', color: '#2c3e50' }}>
-                    → {hop.destination}{hop.domainName ? ` (${hop.domainName})` : ''}
-                  </span>
-                </div>
-                <button
-                  onClick={() => handleHighlightPath(hop)}
-                  title="Highlight this path in the graph"
-                  style={{
-                    background: '#3498db',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    padding: '6px 10px',
-                    fontSize: '12px',
-                    cursor: 'pointer'
-                  }}
-                >
-                  Highlight path
-                </button>
-              </div>
+                    {/* Path Header */}
+                    <div style={{
+                    marginBottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    justifyContent: 'space-between'
+                    }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      minWidth: 0 // allow flex children to shrink
+                    }}>
+                      <span style={{
+                      background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
+                      color: 'white',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      flexShrink: 0
+                      }}>
+                      {hop.pathType}
+                      </span>
+                      <span style={{
+                      fontWeight: 'bold',
+                      color: '#2c3e50',
+                      maxWidth: '180px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      flexShrink: 1
+                      }}>
+                      → {hop.destination}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleHighlightPath(hop)}
+                      title="Highlight this path in the graph"
+                      style={{
+                      background: '#3498db',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '6px 10px',
+                      fontSize: '12px',
+                      cursor: 'pointer',
+                      flexShrink: 0
+                      }}
+                    >
+                      Highlight path
+                    </button>
+                    </div>
 
-
-
-              {/* Path Details */}
+                    {/* Path Details */}
               <div style={{ fontSize: '14px', color: '#666', marginBottom: '12px' }}>
                 <div style={{ marginBottom: '5px' }}>
                   🔢 <strong>Hop #{hop.hopNumber} / {hop.pathLength}</strong> in this path
@@ -985,7 +963,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 border: '1px solid #dee2e6'
               }}>
                 <div style={{ marginBottom: '8px' }}>
-                  <strong>⚡ RTT for this path:</strong> {hop.avgRtt}ms average
+                  <strong>⚡ Hop RTT:</strong> {hop.avgRtt}
                 </div>
                 {hop.rtt_ms && (
                   <div>

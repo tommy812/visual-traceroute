@@ -33,6 +33,9 @@ router.get('/aggregated-paths', (req, res) => tracerouteController.getAggregated
 router.post('/prewarm', (req, res) => tracerouteController.handlePrewarm(req, res));
 router.get('/prewarm', (req, res) => tracerouteController.handlePrewarm(req, res));
 
+// Cache stats
+router.get('/cache-stats', (req, res) => tracerouteController.cacheStats(req, res));
+
 
 
 module.exports = router; 

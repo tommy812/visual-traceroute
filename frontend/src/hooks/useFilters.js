@@ -7,9 +7,13 @@ export const useFilters = () => {
   const [minRTT, setMinRTT] = useState('');
   const [maxRTT, setMaxRTT] = useState('');
   const [minUsagePercent, setMinUsagePercent] = useState('');
-  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
+  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE', 'FASTEST', 'SHORTEST']);
+  const [showReachedOnly, setShowReachedOnly] = useState(false);
+  const [showUnreachedOnly, setShowUnreachedOnly] = useState(false);
   const [selectedProtocols, setSelectedProtocols] = useState([]);
   const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
+  const [hideTimeouts, setHideTimeouts] = useState(false); // NEW
+
 
   // Memoize the reset function to prevent unnecessary re-renders
   const resetFilters = useCallback(() => {
@@ -20,6 +24,7 @@ export const useFilters = () => {
     setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
     setSelectedProtocols([]);
     setShowPrimaryOnly(false);
+    setHideTimeouts(false);
   }, []);
 
   // Memoize the filters object to prevent unnecessary re-renders
@@ -30,7 +35,8 @@ export const useFilters = () => {
     minUsagePercent,
     selectedPathTypes,
     selectedProtocols,
-    showPrimaryOnly
+    showPrimaryOnly,
+    hideTimeouts
   }), [
     destinationSearchTerm,
     minRTT,
@@ -38,7 +44,8 @@ export const useFilters = () => {
     minUsagePercent,
     selectedPathTypes,
     selectedProtocols,
-    showPrimaryOnly
+    showPrimaryOnly,
+    hideTimeouts
   ]);
 
   // Memoize the setters to provide stable references
@@ -50,10 +57,11 @@ export const useFilters = () => {
     setSelectedPathTypes,
     setSelectedProtocols,
     setShowPrimaryOnly,
+    setHideTimeouts,
     resetFilters
   }), [resetFilters]);
 
-    const togglePathType = React.useCallback((pathType) => {
+  const togglePathType = React.useCallback((pathType) => {
     setSelectedPathTypes(prev =>
       prev.includes(pathType) ? prev.filter(p => p !== pathType) : [...prev, pathType]
     );
@@ -75,6 +83,9 @@ export const useFilters = () => {
     ...setters,
     togglePathType,
     toggleProtocol,
-    clearProtocols
+    clearProtocols,
+    selectedPathTypes, setSelectedPathTypes,
+    showReachedOnly, setShowReachedOnly,
+    showUnreachedOnly, setShowUnreachedOnly
   };
 }; 

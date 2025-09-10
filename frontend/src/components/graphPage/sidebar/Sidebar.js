@@ -40,6 +40,8 @@ const Sidebar = ({
   setMinUsagePercent,
   showPrimaryOnly,
   setShowPrimaryOnly,
+  hideTimeouts,
+  setHideTimeouts,
 
   // Actions
   onResetFilters,
@@ -111,6 +113,8 @@ const Sidebar = ({
         minUsagePercent={minUsagePercent}
         setMinUsagePercent={setMinUsagePercent}
         showPrimaryOnly={showPrimaryOnly}
+        hideTimeouts={hideTimeouts}          // NEW
+        setHideTimeouts={setHideTimeouts}  
         setShowPrimaryOnly={setShowPrimaryOnly}
         onReset={onResetFilters}
       />

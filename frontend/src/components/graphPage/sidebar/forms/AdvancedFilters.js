@@ -5,7 +5,6 @@ const AdvancedFilters = ({
   selectedProtocols,
   toggleProtocol,
   clearProtocols,
-  selectedPathTypes,
   togglePathType,
   minRTT,
   setMinRTT,
@@ -15,7 +14,16 @@ const AdvancedFilters = ({
   setMinUsagePercent,
   showPrimaryOnly,
   setShowPrimaryOnly,
-  onReset
+  onReset,
+  selectedPathTypes, 
+  setSelectedPathTypes,
+  showReachedOnly, 
+  setShowReachedOnly,
+  showUnreachedOnly, 
+  setShowUnreachedOnly,
+  hideTimeouts,          
+  setHideTimeouts  
+
 }) => {
   return (
     <div style={{ padding: "15px", borderBottom: "1px solid #dee2e6" }}>
@@ -23,7 +31,7 @@ const AdvancedFilters = ({
         🔍 Advanced Filters
       </h3>
 
-      
+
       {/* Protocols Multi-select */}
       <div style={{ marginBottom: "10px" }}>
         <label style={{ fontSize: "12px", fontWeight: 500, color: "#666", display: "block", marginBottom: "6px" }}>
@@ -131,6 +139,21 @@ const AdvancedFilters = ({
 
       <div style={{ marginBottom: "10px" }}>
         <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
+          Timeouts:
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={hideTimeouts}
+            onChange={(e) => setHideTimeouts(e.target.checked)}
+            style={{ margin: 0, transform: "scale(0.8)" }}
+          />
+          <span style={{ fontSize: "11px" }}>Hide Timed-out Paths</span>
+        </label>
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
           RTT Range (ms):
         </label>
         <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
@@ -184,8 +207,10 @@ const AdvancedFilters = ({
         />
       </div>
 
+  
 
-{/* TODO add show most used path, show fastest path */}
+
+      {/* TODO add show most used path, show fastest path */}
       <div style={{ marginBottom: "10px" }}>
         <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
           Display Options:

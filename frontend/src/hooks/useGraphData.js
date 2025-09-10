@@ -7,11 +7,78 @@ export const useGraphData = (pathData, filters) => {
     minUsagePercent,
     selectedPathTypes,
     showPrimaryOnly,
-    selectedProtocols
+    selectedProtocols,
+    hideTimeouts 
   } = filters;
 
   const filteredData = useMemo(() => {
     if (!pathData || Object.keys(pathData).length === 0) return {};
+    
+    let data = pathData;
+
+    if (hideTimeouts && data && typeof data === 'object') {
+      const cleaned = {};
+      Object.entries(data).forEach(([dest, destObj]) => {
+        if (!destObj || typeof destObj !== 'object') return;
+
+        // Helper: does path contain any timeout hop?
+        const hasTimeout = p => Array.isArray(p?.path) && p.path.some(h => h?.is_timeout);
+
+        // Helper: clone path object (shallow) if kept
+        const keepIfNoTimeout = (p) => (p && !hasTimeout(p)) ? p : null;
+
+        const primary_path     = keepIfNoTimeout(destObj.primary_path);
+        const fastest_path     = keepIfNoTimeout(destObj.fastest_path);
+        const shortest_path    = keepIfNoTimeout(destObj.shortest_path);
+
+        const alternatives = Array.isArray(destObj.alternatives)
+          ? destObj.alternatives.filter(p => !hasTimeout(p))
+          : [];
+
+        // protocol_groups (if present)
+        let protocol_groups = undefined;
+        if (destObj.protocol_groups && typeof destObj.protocol_groups === 'object') {
+          protocol_groups = {};
+            Object.entries(destObj.protocol_groups).forEach(([proto, grp]) => {
+              if (!grp || typeof grp !== 'object') return;
+              const gPrimary  = keepIfNoTimeout(grp.primary_path);
+              const gFastest  = keepIfNoTimeout(grp.fastest_path);
+              const gShortest = keepIfNoTimeout(grp.shortest_path);
+              const gAlts = Array.isArray(grp.alternatives)
+                ? grp.alternatives.filter(p => !hasTimeout(p))
+                : [];
+              // Only keep group if something remains
+              if (gPrimary || gFastest || gShortest || gAlts.length) {
+                protocol_groups[proto] = {
+                  ...grp,
+                  primary_path: gPrimary,
+                  fastest_path: gFastest,
+                  shortest_path: gShortest,
+                  alternatives: gAlts
+                };
+              }
+            });
+          // Drop empty protocol_groups object
+          if (Object.keys(protocol_groups).length === 0) {
+            protocol_groups = undefined;
+          }
+        }
+
+        // If after filtering nothing remains for this destination, skip it
+        const anyLeft = primary_path || fastest_path || shortest_path || (alternatives.length > 0) || protocol_groups;
+        if (anyLeft) {
+          cleaned[dest] = {
+            ...destObj,
+            primary_path,
+            fastest_path,
+            shortest_path,
+            alternatives,
+            protocol_groups
+          };
+        }
+      });
+      data = cleaned;
+    }
 
     const numericMinRTT = minRTT ? parseFloat(minRTT) : null;
     const numericMaxRTT = maxRTT ? parseFloat(maxRTT) : null;
@@ -37,9 +104,10 @@ export const useGraphData = (pathData, filters) => {
       });
     };
 
-    const result = {};
+  const result = {};
 
-    Object.entries(pathData).forEach(([destination, destinationData]) => {
+  // IMPORTANT: iterate over the possibly timeout-pruned 'data' (not raw pathData)
+  Object.entries(data).forEach(([destination, destinationData]) => {
       let groups = destinationData?.protocol_groups || null;
 
       if (groups && selectedSet.size > 1) {
@@ -122,7 +190,8 @@ export const useGraphData = (pathData, filters) => {
     minUsagePercent,
     selectedPathTypes,
     showPrimaryOnly,
-    selectedProtocols
+    selectedProtocols,
+    hideTimeouts
   ]);
 
   return { filteredData };

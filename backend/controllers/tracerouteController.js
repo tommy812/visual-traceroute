@@ -1,5 +1,6 @@
 const { supabase } = require('../config/database');
 const { aggregatedPathsCache } = require('../cache/aggregatedCache');
+const { networkDataCache } = require('../cache/networkDataCache');
 
 class TracerouteController {
   // Get all traceroute methods
@@ -196,6 +197,173 @@ class TracerouteController {
         protocol       // matches traceroute_methods.description
       } = req.query;
 
+      // Backend 30-day cache fast path
+      const now = Date.now();
+      const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+      const windowStart = new Date(now - THIRTY_DAYS_MS);
+      const last30StartIso = windowStart.toISOString();
+      const last30EndIso = new Date(now).toISOString();
+      const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 minutes tolerance for client ahead of server
+
+      // Parse destination tokens early for key construction
+      let destinationTokens = [];
+      if (destinations) {
+        const rawItems = (Array.isArray(destinations) ? destinations : String(destinations).split(','))
+          .map(s => s.trim())
+          .filter(Boolean);
+        destinationTokens = rawItems.filter(t => !t.includes('=')); // drop malformed
+      }
+      const cacheKey = networkDataCache.makeKey({
+        destinations: destinationTokens,
+        protocol,
+        method_id
+      });
+      const insideLast30 = (!start_date || start_date >= last30StartIso) && (!end_date || end_date <= last30EndIso);
+      // Overlaps if any part of requested window intersects last 30d
+      const overlapsLast30 = (() => {
+        if (!start_date && !end_date) return true; // treat empty as now (overlap)
+        const reqStart = start_date ? new Date(start_date).toISOString() : last30StartIso;
+        const reqEnd = end_date ? new Date(end_date).toISOString() : last30EndIso;
+        return reqEnd >= last30StartIso && reqStart <= last30EndIso;
+      })();
+
+      // Attempt to serve from existing full 30-day cache if request range is within cached coverage (tolerant)
+      let existingFull = networkDataCache.getFull(cacheKey);
+
+      // Fallback: if specific protocol/method cache miss, try generic (ALL) cache and filter in-memory
+      let usedGeneric = false;
+      if (!existingFull && (protocol || method_id)) {
+        const genericKey = networkDataCache.makeKey({ destinations: destinationTokens, protocol: null, method_id: null });
+        const genericFull = networkDataCache.getFull(genericKey);
+        if (genericFull) {
+          existingFull = genericFull; // we'll filter below
+          usedGeneric = true;
+        }
+      }
+      if (existingFull) {
+        const reqStart = start_date ? new Date(start_date).getTime() : new Date(existingFull.coverageStart).getTime();
+        const reqEnd = end_date ? new Date(end_date).getTime() : new Date(existingFull.coverageEnd).getTime();
+        const covStart = new Date(existingFull.coverageStart).getTime();
+        const covEnd = new Date(existingFull.coverageEnd).getTime();
+        if (reqStart >= covStart && reqEnd <= covEnd + CLOCK_SKEW_TOLERANCE_MS) {
+          const filtered = existingFull.data.filter(tr => {
+            const ts = new Date(tr.timestamp).getTime();
+            if (start_date && ts < reqStart) return false;
+            if (end_date && ts > reqEnd) return false;
+            if (usedGeneric) {
+              if (protocol) {
+                const desc = (tr.traceroute_methods?.description || tr.traceroute_methods?.name || '').toUpperCase();
+                if (desc !== String(protocol).toUpperCase()) return false;
+              }
+              if (method_id) {
+                const mids = String(method_id).split(',').map(s=>s.trim()).filter(Boolean);
+                if (!mids.includes(String(tr.method_id))) return false;
+              }
+            }
+            return true;
+          });
+          return res.json({
+            success: true,
+            data: filtered,
+            count: filtered.length,
+            total_available: filtered.length,
+            cached: true,
+            cache_window: { start: existingFull.coverageStart, end: existingFull.coverageEnd },
+            reused: true,
+            generic_source: usedGeneric || undefined
+          });
+        }
+      }
+
+      if (insideLast30) {
+  let fullEntry = networkDataCache.getFull(cacheKey);
+        if (!fullEntry) {
+          // Synchronously fetch entire 30-day window now
+          try {
+            let fullQuery = supabase
+              .from('trace_runs')
+              .select(`
+                id,
+                timestamp,
+                method_id,
+                destination_id,
+                traceroute_methods(name,version,description),
+                destinations:destination_id (
+                  id,
+                  address,
+                  domain:domain_id ( id, name )
+                ),
+                hops(
+                  id, hop_number, ip, hostname, rtt1, rtt2, rtt3, extra
+                )
+              `)
+              .order('timestamp', { ascending: false })
+              .gte('timestamp', last30StartIso)
+              .lte('timestamp', last30EndIso);
+            if (destinations) {
+              const ids = destinationTokens.filter(x => /^\d+$/.test(x));
+              const addrs = destinationTokens.filter(x => !/^\d+$/.test(x));
+              if (ids.length) fullQuery = fullQuery.in('destination_id', ids);
+              if (addrs.length) fullQuery = fullQuery.in('destinations.address', addrs);
+            }
+            if (method_id) {
+              const ids = String(method_id).split(',').map(s => s.trim()).filter(Boolean);
+              if (ids.length === 1) fullQuery = fullQuery.eq('method_id', ids[0]);
+              else if (ids.length > 1) fullQuery = fullQuery.in('method_id', ids);
+            }
+            if (protocol) fullQuery = fullQuery.ilike('traceroute_methods.description', String(protocol));
+            const { data: fullData, error: fullErr } = await fullQuery;
+            if (fullErr) throw fullErr;
+            const validFull = (fullData || []).filter(tr => Array.isArray(tr.hops) && tr.hops.length > 0);
+            validFull.forEach(tr => tr.hops.sort((a, b) => a.hop_number - b.hop_number));
+            networkDataCache.setFull(cacheKey, {
+              data: validFull,
+              coverageStart: last30StartIso,
+              coverageEnd: last30EndIso
+            });
+            fullEntry = networkDataCache.getFull(cacheKey);
+
+            // Also store generic ALL-protocol/method slice if current request is a subset and generic missing
+            if ((protocol || method_id) && validFull.length) {
+              const genericKey = networkDataCache.makeKey({ destinations: destinationTokens, protocol: null, method_id: null });
+              if (!networkDataCache.getFull(genericKey)) {
+                networkDataCache.setFull(genericKey, {
+                  data: validFull,
+                  coverageStart: last30StartIso,
+                  coverageEnd: last30EndIso
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('Synchronous 30d window fetch failed:', e.message);
+          }
+        }
+        if (fullEntry) {
+          const filtered = fullEntry.data.filter(tr => {
+            const ts = tr.timestamp;
+            if (start_date && ts < start_date) return false;
+            if (end_date && ts > end_date) return false;
+            if (protocol) {
+              const desc = (tr.traceroute_methods?.description || tr.traceroute_methods?.name || '').toUpperCase();
+              if (desc !== String(protocol).toUpperCase()) return false;
+            }
+            if (method_id) {
+              const mids = String(method_id).split(',').map(s=>s.trim()).filter(Boolean);
+              if (!mids.includes(String(tr.method_id))) return false;
+            }
+            return true;
+          });
+          return res.json({
+            success: true,
+            data: filtered,
+            count: filtered.length,
+            total_available: filtered.length,
+            cached: true,
+            cache_window: { start: fullEntry.coverageStart, end: fullEntry.coverageEnd }
+          });
+        }
+      }
+
       const selectStr = `
         id,
         timestamp,
@@ -252,12 +420,60 @@ class TracerouteController {
 
       validTraceRuns.forEach(tr => tr.hops.sort((a, b) => a.hop_number - b.hop_number));
 
+      // Background prefetch of full 30-day window if applicable & not already cached
+      if (overlapsLast30 && !insideLast30 && !existingFull) { // background prefetch only if no full cache yet
+        const haveFull = networkDataCache.getFull(cacheKey);
+        if (!haveFull && !networkDataCache.getInflight(cacheKey)) {
+          const prefetchPromise = (async () => {
+            try {
+              let fullQuery = supabase
+                .from('trace_runs')
+                .select(selectStr)
+                .order('timestamp', { ascending: false })
+                .gte('timestamp', last30StartIso)
+                .lte('timestamp', last30EndIso);
+              // Reapply destination filters
+              if (destinations) {
+                const items = destinationTokens;
+                const ids = items.filter(x => /^\d+$/.test(x));
+                const addrs = items.filter(x => !/^\d+$/.test(x));
+                if (ids.length) fullQuery = fullQuery.in('destination_id', ids);
+                if (addrs.length) fullQuery = fullQuery.in('destinations.address', addrs);
+              }
+              if (method_id) {
+                const ids = String(method_id).split(',').map(s => s.trim()).filter(Boolean);
+                if (ids.length === 1) fullQuery = fullQuery.eq('method_id', ids[0]);
+                else if (ids.length > 1) fullQuery = fullQuery.in('method_id', ids);
+              }
+              if (protocol) fullQuery = fullQuery.ilike('traceroute_methods.description', String(protocol));
+              const { data: fullData, error: fullErr } = await fullQuery;
+              if (fullErr) throw fullErr;
+              const validFull = (fullData || []).filter(
+                tr => Array.isArray(tr.hops) && tr.hops.length > 0
+              );
+              validFull.forEach(tr => tr.hops.sort((a, b) => a.hop_number - b.hop_number));
+              networkDataCache.setFull(cacheKey, {
+                data: validFull,
+                coverageStart: last30StartIso,
+                coverageEnd: last30EndIso
+              });
+            } catch (e) {
+              console.warn('30d prefetch failed:', e.message);
+            } finally {
+              networkDataCache.clearInflight(cacheKey);
+            }
+          })();
+          networkDataCache.setInflight(cacheKey, prefetchPromise);
+        }
+      }
+
       res.json({
         success: true,
         data: validTraceRuns,
         count: validTraceRuns.length,
         total_available: data?.length || 0,
-        message: 'Network data retrieved successfully'
+        message: 'Network data retrieved successfully',
+        cached: false
       });
     } catch (error) {
       console.error('Error fetching network data:', error);
@@ -372,16 +588,28 @@ class TracerouteController {
   async getAggregatedPaths(req, res) {
     try {
       console.time('getAggregatedPaths');
-      const { destinations, protocols, start_date, end_date, fastest, shortest, debug } = req.query;
-  const self = this; // defensive reference
+      const { destinations, protocols, start_date, end_date, debug } = req.query;
+
+      // Robust boolean parsing (Boolean('false') === true bugfix)
+      const truthy = v => {
+        if (v === undefined || v === null) return false;
+        const s = String(v).trim().toLowerCase();
+        if (s === '' ) return false;
+        return ['1','true','yes','y','on'].includes(s);
+      };
+      const fastest = truthy(req.query.fastest);
+      const shortest = truthy(req.query.shortest);
+      const self = this; // defensive reference
 
       // Accept both numeric destination IDs and address strings; resolve addresses to IDs
       let destIds = null;
       let unresolvedAddresses = [];
+      let rawDestinationTokens = [];
       if (destinations) {
-  const rawItems = destinations.split(',');
-  // Drop malformed tokens like 'destinations=2491'
-  const items = rawItems.map(s => s.trim()).filter(t => t && !t.includes('='));
+        const rawItems = destinations.split(',');
+        // Drop malformed tokens like 'destinations=2491'
+        const items = rawItems.map(s => s.trim()).filter(t => t && !t.includes('='));
+        rawDestinationTokens = items;
         const numericIds = items.filter(v => /^\d+$/.test(v)).map(v => parseInt(v, 10));
         const addrCandidates = items.filter(v => !/^\d+$/.test(v));
         // Filter out entries that look like invalid hostnames quickly (allow dots / letters / hyphens)
@@ -394,7 +622,7 @@ class TracerouteController {
             .select('id,address')
             .in('address', addressItems);
           if (destErr) throw destErr;
-            resolvedIds = (destRows || []).map(r => r.id);
+          resolvedIds = (destRows || []).map(r => r.id);
           // Track which addresses failed to resolve
           unresolvedAddresses = addressItems.filter(a => !destRows.find(r => r.address === a));
         }
@@ -405,18 +633,206 @@ class TracerouteController {
         ? protocols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
         : null;
 
-      const { data: groups, error } = await supabase.rpc('get_aggregated_paths', {
-        p_destination_ids: destIds,
-        p_protocols: protoList,
-        p_start: start_date || null,
-        p_end: end_date || null
+      // Normalize range for cache key to improve hits on repeated relative windows (e.g. "last day")
+      function canonicalRange(startISO, endISO) {
+        if (!startISO || !endISO) return { startKey: startISO, endKey: endISO };
+        try {
+          const start = new Date(startISO);
+          const end = new Date(endISO);
+          const now = new Date();
+          if (isNaN(start.getTime()) || isNaN(end.getTime())) return { startKey: startISO, endKey: endISO };
+
+          // Helpers
+          const sod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0,0);
+          const eod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999);
+          const iso = (d) => d.toISOString();
+          const sameTs = (a,b)=>a.getTime()===b.getTime();
+
+          // Current Day: start 00:00 today, end ~ now
+          const todaySOD = sod(now);
+          if (sameTs(start, todaySOD) && end.getTime() <= now.getTime()+5*60*1000) {
+            return { startKey: 'PERIOD_CURRENT_DAY_START', endKey: 'PERIOD_CURRENT_DAY_NOW' };
+          }
+
+          // Last Day: full previous day 00:00..23:59:59.999
+          const y = new Date(todaySOD.getTime() - 24*60*60*1000);
+            if (sameTs(start, sod(y)) && sameTs(end, eod(y))) {
+              return { startKey: 'PERIOD_LAST_DAY_START', endKey: 'PERIOD_LAST_DAY_END' };
+            }
+
+          // Current Week: Monday 00:00 of this week -> now
+          const day = now.getDay();
+          const daysFromMon = day === 0 ? 6 : day - 1;
+          const monday = new Date(todaySOD.getTime() - daysFromMon*24*60*60*1000);
+          if (sameTs(start, sod(monday)) && end.getTime() <= now.getTime()+5*60*1000) {
+            return { startKey: 'PERIOD_CURRENT_WEEK_START', endKey: 'PERIOD_CURRENT_WEEK_NOW' };
+          }
+
+          // Last Week: previous Monday..Sunday full week
+          const lastWeekMonday = new Date(monday.getTime() - 7*24*60*60*1000);
+          const lastWeekSunday = new Date(lastWeekMonday.getTime() + 6*24*60*60*1000);
+          if (sameTs(start, sod(lastWeekMonday)) && sameTs(end, eod(lastWeekSunday))) {
+            return { startKey: 'PERIOD_LAST_WEEK_START', endKey: 'PERIOD_LAST_WEEK_END' };
+          }
+
+          // Last 30 Days: start = 30 days ago 00:00, end ~ now
+          const thirtyAgo = new Date(now.getTime() - 30*24*60*60*1000);
+          const thirtyAgoSOD = sod(thirtyAgo);
+          if (sameTs(start, thirtyAgoSOD) && end.getTime() <= now.getTime()+5*60*1000) {
+            return { startKey: 'PERIOD_LAST_30_DAYS_START', endKey: 'PERIOD_LAST_30_DAYS_NOW' };
+          }
+
+          // Fallback: preserve exact timestamps
+        } catch { /* ignore */ }
+        return { startKey: startISO, endKey: endISO };
+      }
+
+      const { startKey: normStart, endKey: normEnd } = canonicalRange(start_date, end_date);
+
+      // Distinguish cache key when destinations unresolved (avoid sharing 'ALL')
+      let cacheDestKeyList = destIds && destIds.length ? destIds : null;
+      if ((!cacheDestKeyList || !cacheDestKeyList.length) && rawDestinationTokens.length) {
+        // Use raw tokens as stand-ins (prefixed to avoid collision with numeric IDs)
+        cacheDestKeyList = rawDestinationTokens.map(t => /^(\d+)$/.test(t) ? parseInt(t,10) : `addr:${t}`);
+      }
+
+      // Build cache key early and attempt cache hit BEFORE expensive RPC
+      const cacheKey = aggregatedPathsCache.makeKey({
+        destIds: cacheDestKeyList,
+        protocols: protoList,
+        start: normStart,
+        end: normEnd,
+        fastest,
+        shortest
       });
-      if (error) throw error;
-  const debugInfo = debug ? { input: { destinations, resolved_destination_ids: destIds, unresolved_addresses: unresolvedAddresses, protocols: protoList, start_date, end_date }, rpc_group_count: groups?.length || 0 } : undefined;
+
+      if (!debug) {
+        const cachedEarly = aggregatedPathsCache.get(cacheKey);
+        if (cachedEarly) {
+          if (process.env.CACHE_DEBUG === '1') console.log('[aggregatedPaths] early cache HIT', cacheKey);
+          console.timeEnd('getAggregatedPaths');
+          return res.json({ success: true, data: cachedEarly, cached: true, early: true });
+        }
+        else if (process.env.CACHE_DEBUG === '1') {
+          console.log('[aggregatedPaths] early cache MISS', cacheKey);
+        }
+      }
+
+      // Attempt in-memory aggregation using 30-day raw cache (avoids RPC) when request window fully inside 30d slice
+      let groups = null;
+      try {
+        const nowTs = Date.now();
+        const thirtyDayStartIso = new Date(nowTs - 30 * 24 * 60 * 60 * 1000).toISOString();
+        // Treat missing dates as inside window
+        const inside30 = (!start_date || start_date >= thirtyDayStartIso) && (!end_date || end_date <= new Date(nowTs + 60 * 1000).toISOString());
+        if (inside30 && rawDestinationTokens.length) {
+          const rawKey = networkDataCache.makeKey({ destinations: rawDestinationTokens, protocol: null, method_id: null });
+            let fullEntry = networkDataCache.getFull(rawKey);
+
+            // Proactively fetch the 30-day slice if missing so first request for a past week works
+            if (!fullEntry) {
+              try {
+                const selectStr = `
+                  id,
+                  timestamp,
+                  method_id,
+                  destination_id,
+                  traceroute_methods(name,version,description),
+                  destinations:destination_id (
+                    id,
+                    address,
+                    domain:domain_id ( id, name )
+                  ),
+                  hops( id, hop_number, ip, hostname, rtt1, rtt2, rtt3, extra )
+                `;
+                let q = supabase
+                  .from('trace_runs')
+                  .select(selectStr)
+                  .order('timestamp', { ascending: false })
+                  .gte('timestamp', thirtyDayStartIso)
+                  .lte('timestamp', new Date(nowTs).toISOString());
+                const ids = rawDestinationTokens.filter(x => /^\d+$/.test(x));
+                const addrs = rawDestinationTokens.filter(x => !/^\d+$/.test(x));
+                if (ids.length) q = q.in('destination_id', ids);
+                if (addrs.length) q = q.in('destinations.address', addrs);
+                const { data: fullData, error: fullErr } = await q;
+                if (!fullErr) {
+                  const validFull = (fullData || []).filter(tr => Array.isArray(tr.hops) && tr.hops.length > 0);
+                  validFull.forEach(tr => tr.hops.sort((a,b)=>a.hop_number - b.hop_number));
+                  networkDataCache.setFull(rawKey, {
+                    data: validFull,
+                    coverageStart: thirtyDayStartIso,
+                    coverageEnd: new Date(nowTs).toISOString()
+                  });
+                  fullEntry = networkDataCache.getFull(rawKey);
+                }
+              } catch (prefetchErr) {
+                if (process.env.CACHE_DEBUG === '1') console.warn('[getAggregatedPaths] on-demand 30d fetch failed:', prefetchErr.message);
+              }
+            }
+
+            if (fullEntry && Array.isArray(fullEntry.data) && fullEntry.data.length) {
+              // In-memory aggregate
+              const fromTs = start_date ? Date.parse(start_date) : Date.parse(fullEntry.coverageStart);
+              const toTs = end_date ? Date.parse(end_date) : Date.parse(fullEntry.coverageEnd);
+              const protoFilter = protoList ? new Set(protoList.map(p=>p.toUpperCase())) : null;
+              const tmpMap = new Map(); // key: destId|protocol|signature -> agg
+              for (const run of fullEntry.data) {
+                const runTs = Date.parse(run.timestamp);
+                if (isNaN(runTs) || runTs < fromTs || runTs > toTs) continue;
+                if (destIds && destIds.length && !destIds.includes(run.destination_id)) continue;
+                const protoRaw = (run.traceroute_methods?.description || run.traceroute_methods?.name || 'UNKNOWN').toUpperCase();
+                if (protoFilter && !protoFilter.has(protoRaw)) continue;
+                const hops = Array.isArray(run.hops) ? run.hops : [];
+                if (!hops.length) continue;
+                const hop_count = hops.length;
+                const signature = hops.map(h => h.ip || h.hostname || '*').join('>');
+                let hopRttSum = 0; let hopRttCount = 0;
+                for (const h of hops) {
+                  const samples = [h.rtt1, h.rtt2, h.rtt3].filter(v => typeof v === 'number' && !isNaN(v));
+                  if (!samples.length) continue;
+                  const avg = samples.reduce((s,v)=>s+v,0)/samples.length;
+                  hopRttSum += avg; hopRttCount++;
+                }
+                if (!hopRttCount) continue;
+                const path_avg_rtt = hopRttSum / hopRttCount;
+                const key = `${run.destination_id}|${protoRaw}|${signature}`;
+                let agg = tmpMap.get(key);
+                if (!agg) {
+                  agg = { destination_id: run.destination_id, protocol: protoRaw, signature, run_count: 0, path_avg_rtt: 0, hop_count, sample_run_ids: [] };
+                  tmpMap.set(key, agg);
+                }
+                agg.run_count += 1;
+                agg.path_avg_rtt += (path_avg_rtt - agg.path_avg_rtt) / agg.run_count;
+                if (agg.sample_run_ids.length < 3) agg.sample_run_ids.push(run.id);
+              }
+              groups = Array.from(tmpMap.values());
+              if (process.env.CACHE_DEBUG === '1') console.log('[getAggregatedPaths] Served via in-memory aggregation groups=', groups.length);
+            }
+        }
+      } catch (memAggErr) {
+        console.warn('[getAggregatedPaths] in-memory aggregation fallback failed:', memAggErr.message);
+        groups = null; // force DB path
+      }
+
+  // If in-memory aggregation failed OR produced zero rows, fall back to RPC
+  if (!groups || groups.length === 0) {
+        const { data: rpcGroups, error } = await supabase.rpc('get_aggregated_paths', {
+          p_destination_ids: destIds,
+          p_protocols: protoList,
+          p_start: start_date || null,
+          p_end: end_date || null
+        });
+        if (error) throw error;
+        groups = rpcGroups;
+      }
+      const debugInfo = debug ? { input: { destinations, resolved_destination_ids: destIds, unresolved_addresses: unresolvedAddresses, protocols: protoList, start_date, end_date }, rpc_group_count: groups?.length || 0 } : undefined;
 
       // If empty, still return JSON (maybe filters too restrictive or underlying view has no data)
       if (!groups || groups.length === 0) {
-        console.warn('[getAggregatedPaths] RPC returned 0 rows', debugInfo || '');
+        if (process.env.CACHE_DEBUG === '1') {
+          console.warn('[getAggregatedPaths] RPC returned 0 rows for range', start_date, end_date, 'destIds', destIds, 'protoList', protoList);
+        }
         return res.json({ success: true, data: {}, debug: debugInfo });
       }
       // Organize by destination
@@ -427,24 +843,7 @@ class TracerouteController {
         byDest.get(dest).push(row);
       });
 
-      // Cache key (exclude debug param)
-      const cacheKey = aggregatedPathsCache.makeKey({
-        destIds,
-        protocols: protoList,
-        start: start_date,
-        end: end_date,
-        fastest: Boolean(fastest),
-        shortest: Boolean(shortest)
-      });
-
-      // Serve from cache if available and not requesting debug forced miss
-      if (!debug) {
-        const cached = aggregatedPathsCache.get(cacheKey);
-        if (cached) {
-          console.timeEnd('getAggregatedPaths');
-          return res.json({ success: true, data: cached, cached: true });
-        }
-      }
+      // (Late cache check removed; we now only check early before RPC)
 
       const result = {};
       // Build destination id => address map for all destinations appearing in groups
@@ -459,7 +858,7 @@ class TracerouteController {
         destAddressMap = new Map((destRows || []).map(r => [r.id, r.address]));
       }
 
-  for (const [destId, rows] of byDest.entries()) {
+      for (const [destId, rows] of byDest.entries()) {
         // Group by protocol
         const protoMap = new Map();
         rows.forEach(r => {
@@ -563,18 +962,158 @@ class TracerouteController {
           total_traces: totalDestRuns,
           protocol_groups
         };
-  }
-  console.timeEnd('getAggregatedPaths');
-  // Store in cache
-  aggregatedPathsCache.set(cacheKey, result);
-  return res.json({ success: true, data: result, debug: debugInfo, cached: false });
-      
+      }
+      console.timeEnd('getAggregatedPaths');
+      // Proactive 30-day prefetch of raw network-data for same destination set (if reasonably small)
+      try {
+        const MAX_PREFETCH_DESTS =
+          parseInt(process.env.PREFETCH_30D_MAX_DESTS || '25', 10);
+
+        if (rawDestinationTokens &&
+          rawDestinationTokens.length &&
+          rawDestinationTokens.length <= MAX_PREFETCH_DESTS) {
+
+          const now = Date.now();
+          const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+          const last30StartIso = new Date(now - THIRTY_DAYS_MS).toISOString();
+          const last30EndIso = new Date(now).toISOString();
+
+          // Cache key for raw network data (same shape used in getNetworkData)
+          const cacheKey = networkDataCache.makeKey({
+            destinations: rawDestinationTokens,
+            protocol: null,
+            method_id: null
+          });
+
+          const alreadyFull = networkDataCache.getFull(cacheKey);
+          const inflight = networkDataCache.getInflight(cacheKey);
+
+          if (!alreadyFull && !inflight) {
+            // Build select (mirrors earlier prefetch block)
+            const selectStr = `
+              id,
+              timestamp,
+              method_id,
+              destination_id,
+              traceroute_methods(name,version,description),
+              destinations:destination_id (
+                id,
+                address,
+                domain:domain_id ( id, name )
+              ),
+              hops(
+                id, hop_number, ip, hostname, rtt1, rtt2, rtt3, extra
+              )
+            `;
+
+            let q = supabase
+              .from('trace_runs')
+              .select(selectStr)
+              .order('timestamp', { ascending: false })
+              .gte('timestamp', last30StartIso)
+              .lte('timestamp', last30EndIso);
+
+            const ids = rawDestinationTokens.filter(x => /^\d+$/.test(x));
+            const addrs = rawDestinationTokens.filter(x => !/^\d+$/.test(x));
+
+            if (ids.length) q = q.in('destination_id', ids);
+            if (addrs.length) q = q.in('destinations.address', addrs);
+
+            const { data: fullData, error: fullErr } = await q;
+            if (fullErr) {
+              console.warn('[aggregatedPaths sync prefetch] query failed:', fullErr.message);
+            } else {
+              const validFull = (fullData || [])
+                .filter(tr => Array.isArray(tr.hops) && tr.hops.length > 0);
+              validFull.forEach(tr => tr.hops.sort((a, b) => a.hop_number - b.hop_number));
+
+              networkDataCache.setFull(cacheKey, {
+                data: validFull,
+                coverageStart: last30StartIso,
+                coverageEnd: last30EndIso
+              });
+            }
+          }
+        }
+      } catch (prefetchErr) {
+        console.warn('[aggregatedPaths sync prefetch] unexpected error:', prefetchErr.message);
+      }
+      // Store in cache
+      aggregatedPathsCache.set(cacheKey, result);
+
+      // Opportunistic prewarm: build cache entries for other standard frontend periods for same destinations
+      try {
+        const PERIODS = [
+          'CURRENT_DAY','LAST_DAY','CURRENT_WEEK','LAST_WEEK','LAST_30_DAYS'
+        ];
+        const now = new Date();
+        const sod = d=> new Date(d.getFullYear(), d.getMonth(), d.getDate(),0,0,0,0);
+        const eod = d=> new Date(d.getFullYear(), d.getMonth(), d.getDate(),23,59,59,999);
+        const mondayOf = d => { const day=d.getDay(); const diff= day===0?6:day-1; return new Date(sod(d).getTime()-diff*24*60*60*1000); };
+        const buildRanges = () => {
+          const todaySOD = sod(now);
+          const y = new Date(todaySOD.getTime()-24*60*60*1000);
+          const mon = mondayOf(now);
+          const lastMon = new Date(mon.getTime()-7*24*60*60*1000);
+          const lastSun = new Date(lastMon.getTime()+6*24*60*60*1000);
+          const thirtyAgo = new Date(now.getTime()-30*24*60*60*1000);
+          return {
+            CURRENT_DAY: { start: sod(now), end: now },
+            LAST_DAY: { start: sod(y), end: eod(y) },
+            CURRENT_WEEK: { start: sod(mon), end: now },
+            LAST_WEEK: { start: sod(lastMon), end: eod(lastSun) },
+            LAST_30_DAYS: { start: sod(thirtyAgo), end: now }
+          };
+        };
+        const ranges = buildRanges();
+        const destKeyList = cacheDestKeyList; // already computed earlier
+        const protoListForKey = protoList; // same protocol filter as current request (could also prewarm ALL)
+        for (const pid of PERIODS) {
+          const r = ranges[pid];
+          if (!r) continue;
+          const canon = canonicalRange(r.start.toISOString(), r.end.toISOString());
+          const k = aggregatedPathsCache.makeKey({
+            destIds: destKeyList,
+            protocols: protoListForKey,
+            start: canon.startKey,
+            end: canon.endKey,
+            fastest,
+            shortest
+          });
+          if (!aggregatedPathsCache.get(k)) {
+            // Only store current result if the requested window fully covers the period range (for correctness)
+            // For differing window, skip; later user request will compute accurately.
+            const reqStartMs = start_date ? Date.parse(start_date) : null;
+            const reqEndMs = end_date ? Date.parse(end_date) : null;
+            const rStartMs = r.start.getTime();
+            const rEndMs = r.end.getTime();
+            const covers = reqStartMs!=null && reqEndMs!=null && reqStartMs <= rStartMs && reqEndMs >= rEndMs;
+            if (covers) {
+              aggregatedPathsCache.set(k, result);
+            }
+          }
+        }
+      } catch (prewarmPeriodsErr) {
+        if (process.env.CACHE_DEBUG==='1') console.warn('[aggregatedPaths] period prewarm skipped', prewarmPeriodsErr.message);
+      }
+
+      return res.json({
+        success: true,
+        data: result,
+        debug: debugInfo,
+        cached: false,
+        cache_key: cacheKey,
+        normalized_range: { start: normStart, end: normEnd },
+        prefetched_full_30d: true
+      });
+
+
     } catch (e) {
       console.error('getAggregatedPaths error:', e);
       if (e && typeof e.message === 'string' && e.message.includes('invalid input syntax for type inet')) {
         return res.status(400).json({
           success: false,
-            error: 'Bad destination filter',
+          error: 'Bad destination filter',
           details: 'One or more provided destinations are not valid numeric IDs or resolvable addresses.',
           hint: 'Send numeric destination IDs (preferred) or valid addresses. Avoid passing repeated query keys like destinations=2490,destinations=2491.'
         });
@@ -630,7 +1169,7 @@ class TracerouteController {
       for (const [proto, list] of protoMap.entries()) {
         list.sort((a, b) => {
           if (b.run_count !== a.run_count) return b.run_count - a.run_count;
-            if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
+          if (a.path_avg_rtt !== b.path_avg_rtt) return a.path_avg_rtt - b.path_avg_rtt;
           if (a.hop_count !== b.hop_count) return a.hop_count - b.hop_count;
           return a.signature.localeCompare(b.signature);
         });
@@ -738,81 +1277,93 @@ class TracerouteController {
   }
 
   // Helper: convert aggregated row to frontend path object
-   async buildPathObject(row, totalRunsForPercent) {
-      if (!row) return null;
-      const sampleRun = row.sample_run_ids?.[0];
-      let path = [];
-      let runTimestamp = null;
-      if (sampleRun) {
-        const { data: hopsData, error: hopsErr } = await supabase
-          .from('hops')
-          .select('hop_number, ip, hostname, rtt1, rtt2, rtt3')
-          .eq('trace_run_id', sampleRun)
-          .order('hop_number');
-        if (hopsErr) throw hopsErr;
-        // fetch representative run timestamp so frontend date-range filter keeps it
-        const { data: runMeta, error: runErr } = await supabase
-          .from('trace_runs')
-          .select('timestamp')
-          .eq('id', sampleRun)
-          .single();
-        if (runErr) {
-          // non-fatal; leave timestamp null
-          console.warn('Failed to fetch timestamp for run', sampleRun, runErr.message);
-        } else {
-          runTimestamp = runMeta?.timestamp || null;
-        }
-        path = (hopsData || []).map(h => ({
-          hop_number: h.hop_number,
-          ip: h.ip,
-          hostname: h.hostname,
-          rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
-          is_timeout: !h.ip,
-          protocol: row.protocol
-        }));
+  async buildPathObject(row, totalRunsForPercent) {
+    if (!row) return null;
+    const sampleRun = row.sample_run_ids?.[0];
+    let path = [];
+    let runTimestamp = null;
+    if (sampleRun) {
+      const { data: hopsData, error: hopsErr } = await supabase
+        .from('hops')
+        .select('hop_number, ip, hostname, rtt1, rtt2, rtt3')
+        .eq('trace_run_id', sampleRun)
+        .order('hop_number');
+      if (hopsErr) throw hopsErr;
+      // fetch representative run timestamp so frontend date-range filter keeps it
+      const { data: runMeta, error: runErr } = await supabase
+        .from('trace_runs')
+        .select('timestamp')
+        .eq('id', sampleRun)
+        .single();
+      if (runErr) {
+        // non-fatal; leave timestamp null
+        console.warn('Failed to fetch timestamp for run', sampleRun, runErr.message);
+      } else {
+        runTimestamp = runMeta?.timestamp || null;
       }
-      const percent = totalRunsForPercent
-        ? +(row.run_count / totalRunsForPercent * 100).toFixed(2)
-        : 0;
-      return {
-        path,
-        count: row.run_count,
-        percent,
-        avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
-        timeStamp: runTimestamp || new Date().toISOString(),
+      path = (hopsData || []).map(h => ({
+        hop_number: h.hop_number,
+        ip: h.ip,
+        hostname: h.hostname,
+        rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
+        is_timeout: !h.ip,
         protocol: row.protocol
-      };
+      }));
     }
+    const percent = totalRunsForPercent
+      ? +(row.run_count / totalRunsForPercent * 100).toFixed(2)
+      : 0;
+    return {
+      path,
+      count: row.run_count,
+      percent,
+      avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
+      timeStamp: runTimestamp || new Date().toISOString(),
+      protocol: row.protocol
+    };
+  }
 
 
 
 
   // Health check for the controller
   async healthCheck(req, res) {
-      try {
-        const { count, error } = await supabase
-          .from('traceroute_methods')
-          .select('*', { count: 'exact', head: true });
+    try {
+      const { count, error } = await supabase
+        .from('traceroute_methods')
+        .select('*', { count: 'exact', head: true });
 
-        if (error) {
-          throw error;
-        }
-
-        res.json({
-          success: true,
-          message: 'Traceroute controller is healthy',
-          database_status: 'connected',
-          methods_count: count || 0
-        });
-      } catch (error) {
-        console.error('Health check failed:', error);
-        res.status(500).json({
-          success: false,
-          error: 'Health check failed',
-          details: error.message
-        });
+      if (error) {
+        throw error;
       }
+
+      res.json({
+        success: true,
+        message: 'Traceroute controller is healthy',
+        database_status: 'connected',
+        methods_count: count || 0
+      });
+    } catch (error) {
+      console.error('Health check failed:', error);
+      res.status(500).json({
+        success: false,
+        error: 'Health check failed',
+        details: error.message
+      });
     }
   }
 
-      module.exports = new TracerouteController(); 
+  async cacheStats(req, res) {
+    try {
+      res.json({
+        success: true,
+        aggregated_paths: aggregatedPathsCache.getStats(),
+        network_data_30d: networkDataCache.getStats()
+      });
+    } catch (e) {
+      res.status(500).json({ success: false, error: 'Failed to get cache stats', details: e.message });
+    }
+  }
+}
+
+module.exports = new TracerouteController(); 
