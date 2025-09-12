@@ -7,7 +7,7 @@ export const useFilters = () => {
   const [minRTT, setMinRTT] = useState('');
   const [maxRTT, setMaxRTT] = useState('');
   const [minUsagePercent, setMinUsagePercent] = useState('');
-  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE', 'FASTEST', 'SHORTEST']);
+  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
   const [showReachedOnly, setShowReachedOnly] = useState(false);
   const [showUnreachedOnly, setShowUnreachedOnly] = useState(false);
   const [selectedProtocols, setSelectedProtocols] = useState([]);

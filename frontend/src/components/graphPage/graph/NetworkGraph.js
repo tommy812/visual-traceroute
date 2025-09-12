@@ -431,7 +431,7 @@ const NetworkGraph = React.memo(({
               enabled: true,
               direction: "LR",
               sortMethod: "directed",
-              shakeTowards: "root",
+              shakeTowards: "roots",
               nodeSpacing: 140,
               treeSpacing: 120,
               levelSeparation: 200,
@@ -442,11 +442,7 @@ const NetworkGraph = React.memo(({
           },
           physics: { enabled: false },
           edges: {
-            smooth: {
-              type: "cubicBezier",
-              roundness: 0.35,
-              forceDirection: "horizontal"
-            },
+              smooth: false,
             chosen: false
           }
         };

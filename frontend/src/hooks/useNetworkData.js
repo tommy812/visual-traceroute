@@ -19,17 +19,22 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
       return dest?.address; // fallback
     }).filter(Boolean);
     
+    // Normalize protocols to a stable, sorted array for equality checks/fetching
+    const protoList = Array.isArray(selectedProtocols) ? [...new Set(selectedProtocols)] : [];
+    protoList.sort();
+
     const params = {
       destinations: destinationStrings,
       start_date: dateRange.start?.toISOString(),
       end_date: dateRange.end?.toISOString(),
+      selectedProtocols: protoList
     };
     
     // Only include defined parameters
     return Object.fromEntries(
       Object.entries(params).filter(([_, value]) => value !== undefined)
     );
-  }, [selectedDestinations, dateRange.start, dateRange.end]);
+  }, [selectedDestinations, dateRange.start, dateRange.end, selectedProtocols]);
 
   // Check if we need to fetch new data
   const shouldFetch = useMemo(() => {
@@ -45,29 +50,35 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     if (!shouldFetch) return;
 
     try {
-      // 1) Cache-first
-      const cached = dataRepository.getCachedNetworkData(fetchParams);
+      // Always show loading spinner at the start
+      setLoading(true);
+      setError(null);
+
+      // 1) Cache-first (populate UI quickly but keep loading until fresh data arrives)
+  const cached = dataRepository.getCachedNetworkData(fetchParams, { selectedProtocols: fetchParams.selectedProtocols });
       const hadCached = cached && Object.keys(cached).length > 0;
       if (hadCached) {
         setPathData(cached);
-        setLoading(false);  // do not block UI
-      } else {
-        setLoading(true);
-        setError(null);
       }
 
-      // 2) Background refresh (aggregated API)
-      const fresh = await dataRepository.fetchAndCacheAggregated(fetchParams);
-      setPathData(fresh);
+      // 2) Background refresh (aggregated API) — but skip if cache coverage is sufficient
+      let needFresh = true;
+      if (hadCached) {
+        const within30 = dataRepository.isRangeWithinLast30Days(fetchParams);
+        const covered = dataRepository.hasCoverageLast30Days(fetchParams.destinations);
+        if (within30 && covered) needFresh = false;
+      }
+      if (needFresh) {
+        const fresh = await dataRepository.fetchAndCacheAggregated(fetchParams);
+        setPathData(fresh);
+      }
       setLastFetchParams(fetchParams);
 
       // 3) Keep last-30-days warm
-      const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
-      dataRepository.prefetchLast30Days(destinationStrings);
+  const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
+  dataRepository.prefetchLast30Days(destinationStrings);
     } catch (err) {
-      if (!pathData || Object.keys(pathData).length === 0) {
-        setError(err.message || 'Failed to load network data');
-      }
+      setError(err.message || 'Failed to load network data');
     } finally {
       setLoading(false);
     }

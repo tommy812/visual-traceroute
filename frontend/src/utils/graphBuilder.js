@@ -70,7 +70,6 @@ export function buildGraph({
 
   // Lanes for destinations
   const { laneByDest } = computeDestinationLanes(filteredData);
-  const rowHeight = 80;
 
   // Order destinations by lane index and compute a level offset per destination
   const orderedDestinations = Array.from(laneByDest.entries())
@@ -149,7 +148,7 @@ export function buildGraph({
   Object.entries(filteredData).forEach(([destination, destData]) => {
     const destColor = generateDestinationColor(selectedDestinations.indexOf(destination));
 
-    const addPath = (pathObj, type, altIndex) => {
+  const addPath = (pathObj, type, altIndex) => {
       if (!pathObj || !Array.isArray(pathObj.path)) return;
       const hops = pathObj.path;
   const isSingleHopPath = Array.isArray(hops) && hops.length === 1;
@@ -160,9 +159,10 @@ export function buildGraph({
       if (!pathId) {
         const hopSig = JSON.stringify((hops || []).map(h => h?.ip || 'timeout'));
         let hash = 0; for (let i = 0; i < hopSig.length; i++) hash = ((hash << 5) - hash) + hopSig.charCodeAt(i) | 0;
+        const inst = pathObj._instanceId ? `-inst${pathObj._instanceId}` : '';
         pathId = type === 'PRIMARY'
-          ? `${destination}-PRIMARY-${hash}`
-          : `${destination}-ALTERNATIVE-${altIndex}-${hash}`;
+          ? `${destination}-PRIMARY-${hash}${inst}`
+          : `${destination}-ALTERNATIVE-${altIndex}-${hash}${inst}`;
         Object.defineProperty(pathObj, '_cachedPathId', { value: pathId, enumerable: false, configurable: true });
       }
 
@@ -343,15 +343,7 @@ export function buildGraph({
 
     const hopNumber = parseInt(hopStr, 10);
 
-    // Y positioning
-    let y;
-    if (dest === 'cross-destination') {
-      y = hopNumber * rowHeight;
-    } else {
-      const baseRows = rowOffsetByDest.get(dest) ?? 0;
-      const yIndex = baseRows + hopNumber;
-      y = yIndex * rowHeight;
-    }
+  // Y positioning: computed via hierarchical layout; explicit y not used
 
     if (type === 'timeout') {
       addNodeOnce(key, (id) => {
@@ -627,25 +619,49 @@ export function buildGraph({
     const straightLineStyle = { type: 'continuous', roundness: 0.0, forceDirection: 'horizontal' };
     const normalCurveStyle = { type: 'continuous', roundness: 0.4, forceDirection: 'horizontal' };
 
+    const pathIds = Array.from(usage.paths);
     if (colors.length <= 1) {
-      const eid = `edge_${edgeId++}`;
-      edges.push({
-        id: eid,
-        from, to,
-        color: { color: colors[0] || '#999', opacity: 1 },
-        width: 2,
-        arrows: 'to',
-        smooth: isAggregated ? straightLineStyle : normalCurveStyle,
-        dashes: false,
-        arrowStrikethrough: false,
-        title,                        // <-- updated
-        destinations: destinationLines, // optional extra data
-        paths: Array.from(usage.paths)
-      });
-      usage.paths.forEach(pid => {
-        if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
-        pathMapping.get(eid).add(pid);
-      });
+      // If multiple paths traverse the same from->to, draw one edge per path with slight curvature
+      if (pathIds.length > 1) {
+        pathIds.forEach((pid, idx) => {
+          const eid = `edge_${edgeId++}`;
+          edges.push({
+            id: eid,
+            from, to,
+            color: { color: colors[0] || '#999', opacity: 1 },
+            width: 2,
+            arrows: 'to',
+            // Use curves even when aggregated so overlaps are visible
+            smooth: curvedForIndex(idx, pathIds.length),
+            dashes: false,
+            arrowStrikethrough: false,
+            title,
+            destinations: destinationLines,
+            paths: [pid]
+          });
+          if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
+          pathMapping.get(eid).add(pid);
+        });
+      } else {
+        const eid = `edge_${edgeId++}`;
+        edges.push({
+          id: eid,
+          from, to,
+          color: { color: colors[0] || '#999', opacity: 1 },
+          width: 2,
+          arrows: 'to',
+          smooth: isAggregated ? straightLineStyle : normalCurveStyle,
+          dashes: false,
+          arrowStrikethrough: false,
+          title,
+          destinations: destinationLines,
+          paths: pathIds
+        });
+        pathIds.forEach(pid => {
+          if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
+          pathMapping.get(eid).add(pid);
+        });
+      }
     } else {
       colors.forEach((col, idx) => {
         const eid = `edge_${edgeId++}`;
@@ -660,9 +676,9 @@ export function buildGraph({
           arrowStrikethrough: false,
           title,                        // <-- updated
           destinations: destinationLines,
-          paths: Array.from(usage.paths)
+          paths: pathIds
         });
-        usage.paths.forEach(pid => {
+        pathIds.forEach(pid => {
           if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
           pathMapping.get(eid).add(pid);
         });

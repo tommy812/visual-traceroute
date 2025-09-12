@@ -174,8 +174,34 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
     if (!graph || !pathMapping) return;
     const paths = pathMapping.get(elementId);
     if (!paths || paths.size === 0) return;
+
+    // If elementId is an edge (string id like 'edge_#'), build highlights directly
+    if (typeof elementId === 'string' && elementId.startsWith('edge_')) {
+      let colorIdx = 0;
+      const result = Array.from(paths).map(pathId => {
+        const { nodes, edges } = collectForPathId(pathId);
+        const isPrimary = /-PRIMARY(\b|$)/.test(pathId);
+        const color = pathHighlightColors[colorIdx % pathHighlightColors.length];
+        colorIdx++;
+        const [dest, type] = pathId.split('-', 2);
+        return {
+          id: pathId,
+          destination: dest || 'Unknown',
+          pathType: type || 'UNKNOWN',
+          isPrimary,
+          nodes,
+          edges,
+          highlightColor: color,
+          lineStyle: isPrimary ? 'solid' : 'dotted'
+        };
+      }).sort((a, b) => (a.isPrimary === b.isPrimary ? 0 : a.isPrimary ? -1 : 1));
+      setHighlightedPaths(result);
+      return;
+    }
+
+    // Otherwise treat as node id
     highlightPathsForNode(elementId);
-  }, [graph, pathMapping, highlightPathsForNode]);
+  }, [graph, pathMapping, collectForPathId, highlightPathsForNode]);
 
   const clearHighlight = useCallback(() => setHighlightedPaths([]), []);
 
@@ -219,7 +245,7 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
 
     const edges = graph.edges.map(e => {
       const matchingPaths = highlightedPaths.filter(p =>
-        p.edges.some(ed => ed.from === e.from && ed.to === e.to)
+        p.edges.some(ed => (ed.id ? ed.id === e.id : (ed.from === e.from && ed.to === e.to)))
       );
       if (matchingPaths.length > 0) {
         const primaryPath = matchingPaths.find(p => p.isPrimary);

@@ -35,7 +35,13 @@ const dataRepository = {
     const end = toDate(end_date);
     const raw = networkDataCache.getRunsInRange(destinations, start, end);
     if (!raw.length) return null;
-    return transformAndValidate(raw, opts);
+    // Apply protocol filter (and other initial filters) before transforming
+    const filteredRaw = dataTransformer.applyInitialFilters
+      ? dataTransformer.applyInitialFilters(raw, {
+          selectedProtocols: Array.isArray(opts.selectedProtocols) ? opts.selectedProtocols : []
+        })
+      : raw;
+    return transformAndValidate(filteredRaw, opts);
   },
 
   // Fetch from API, cache raw, return transformed
@@ -87,6 +93,19 @@ const dataRepository = {
       console.warn('Prefetch last 30 days failed:', e);
     }
   }
+};
+
+// Helper exports for cache decisions
+dataRepository.hasCoverageLast30Days = (destinations = []) => {
+  return networkDataCache.hasLast30DaysCoverage(destinations);
+};
+
+dataRepository.isRangeWithinLast30Days = ({ start_date, end_date }) => {
+  if (!start_date || !end_date) return false;
+  const last30 = getLast30DaysRange();
+  const start = new Date(start_date).valueOf();
+  const end = new Date(end_date).valueOf();
+  return start >= last30.start.valueOf() && end <= last30.end.valueOf();
 };
 
 export default dataRepository;
