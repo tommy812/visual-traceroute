@@ -836,82 +836,81 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               </select>
             </label>
 
-              {/* Per-run toggle */}
-                  <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    <input
-                    type="checkbox"
-                    checked={showPerRun}
-                    onChange={(e) => setShowPerRun(e.target.checked)}
-                    />
-                    Per-run entries
-                  </label>
-                  </div>
+            {/* Per-run toggle */}
+            <label style={{ fontSize: '12px', color: '#555', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                type="checkbox"
+                checked={showPerRun}
+                onChange={(e) => setShowPerRun(e.target.checked)}
+              />
+              Per-run entries
+            </label>
+          </div>
 
-                  {visibleHops.map((hop, index) => (
-                  <div key={index} style={{
-                    background: '#f8f9fa',
-                    padding: '15px',
-                    borderRadius: '6px',
-                    border: '1px solid #e0e0e0',
-                    marginBottom: '15px'
-                  }}>
-                    {/* Path Header */}
-                    <div style={{
-                    marginBottom: '12px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    justifyContent: 'space-between'
-                    }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      minWidth: 0 // allow flex children to shrink
-                    }}>
-                      <span style={{
-                      background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
-                      color: 'white',
-                      padding: '4px 8px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      fontWeight: 'bold',
-                      flexShrink: 0
-                      }}>
-                      {hop.pathType}
-                      </span>
-                      <span style={{
+          {visibleHops.map((hop, index) => (
+            <div key={index} style={{
+              background: '#f8f9fa',
+              padding: '15px',
+              borderRadius: '6px',
+              border: '1px solid #e0e0e0',
+              marginBottom: '15px'
+            }}>
+              {/* Path Header */}
+              <div style={{
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap'
+              }}>
+                <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+                  <span
+                    title={hop.destination}
+                    style={{
+                      display: 'block',
                       fontWeight: 'bold',
                       color: '#2c3e50',
-                      maxWidth: '180px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      flexShrink: 1
-                      }}>
-                      → {hop.destination}
-                      </span>
-                    </div>
-                    <button
-                      onClick={() => handleHighlightPath(hop)}
-                      title="Highlight this path in the graph"
-                      style={{
-                      background: '#3498db',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '4px',
-                      padding: '6px 10px',
-                      fontSize: '12px',
-                      cursor: 'pointer',
-                      flexShrink: 0
-                      }}
-                    >
-                      Highlight path
-                    </button>
-                    </div>
+                      wordBreak: 'break-all',   // allow IPv6 to wrap
+                      lineHeight: 1.2
+                    }}
+                  >
+                    {hop.destination}
+                  </span>
+                </div>
+                <button
+                  onClick={() => handleHighlightPath(hop)}
+                  title="Highlight this path in the graph"
+                  style={{
+                    background: '#3498db',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '6px 10px',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    flexShrink: 0
+                  }}
+                >
+                  Highlight path
+                </button>
+              </div>
 
-                    {/* Path Details */}
+              {/* Path Details */}
               <div style={{ fontSize: '14px', color: '#666', marginBottom: '12px' }}>
+                <span style={{
+                  background: hop.pathType === 'PRIMARY' ? '#27ae60' : '#e67e22',
+                  color: 'white',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  display: 'inline-block',
+                  whiteSpace: 'nowrap'  // keep label on one line
+                }}>
+                  {hop.pathType}
+                </span>
+
                 <div style={{ marginBottom: '5px' }}>
                   🔢 <strong>Hop #{hop.hopNumber} / {hop.pathLength}</strong> in this path
                 </div>

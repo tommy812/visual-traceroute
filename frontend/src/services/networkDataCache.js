@@ -78,6 +78,28 @@ class NetworkDataCache {
     });
     return stats;
   }
+  splitRunsByDestination(rawRuns) {
+    const byDest = new Map();
+    (Array.isArray(rawRuns) ? rawRuns : []).forEach(run => {
+      if (!run) return;
+      // Prefer numeric id (matches UI params), fallback to address
+      const key =
+        run.destination_id != null
+          ? String(run.destination_id)
+          : (run.destinations?.address ||
+            run.destination?.address ||
+            run.destination ||
+            'UNKNOWN');
+      if (!byDest.has(key)) byDest.set(key, []);
+      byDest.get(key).push(run);
+    });
+    return byDest;
+  }
+
+
+
+
+
 }
 
 const networkDataCache = new NetworkDataCache();

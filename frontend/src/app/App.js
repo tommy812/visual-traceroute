@@ -7,12 +7,8 @@ import DocumentationPage from "../components/documentationPage/documentationPage
 
 import "../styles/styles.css";
 import "../styles/network.css";
-// hooks
-import { useFilters } from "../hooks/useFilters";
-import { useDateRange } from "../hooks/useDateRange";
-import { useNetworkData } from "../hooks/useNetworkData";
-import { useDestinations } from "../hooks/useDestinations";
-import { useHopDrawer } from "../hooks/useHopDrawer";
+// hooks (centralized barrel)
+import { useFilters, useDateRange, useNetworkData, useDestinations, useHopDrawer } from "../hooks";
 
 
 // Error Boundary for the entire application
@@ -118,9 +114,9 @@ const ChartsApp = React.memo(({onGoLanding}) => {
 
   // Filtered destinations
   const filteredDestinations = React.useMemo(
-   () => getFilteredDestinations(filters.destinationSearchTerm, filters),
-   [getFilteredDestinations, filters.destinationSearchTerm, filters.selectedProtocols]
- );
+    () => getFilteredDestinations(filters.destinationSearchTerm, { selectedProtocols: filters.selectedProtocols }),
+    [getFilteredDestinations, filters.destinationSearchTerm, filters.selectedProtocols]
+  );
 
   const handleDrawerHighlight = React.useCallback((pathId) => {
     window.dispatchEvent(new CustomEvent('graph:highlightPath', { detail: { pathId } }));

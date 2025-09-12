@@ -4,9 +4,8 @@ import ipGeoService from '../../../services/ipGeoService';
 import GraphControls from './GraphControls';
 
 
-import { useNetworkGraphModel } from '../../../hooks/useNetworkGraphModel';
-import { useGraphData } from '../../../hooks/useGraphData';
-import { usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
+import { useNetworkGraphModel, useGraphData, usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
+import dataRepository from '../../../services/dataRepository';
 
 
 // Error Boundary for NetworkGraph
@@ -88,6 +87,7 @@ const NetworkGraph = React.memo(({
   const [showPrefixAggregation, setShowPrefixAggregation] = useState(false); // Toggle prefix aggregation
   
   // New aggregation controls
+  // Default to 'none' (Show All Paths) to avoid unintended aggregation hiding data
   const [aggregationMode, setAggregationMode] = useState('none'); // 'none', 'shared-ips', 'asn'
   // Default: show all paths (mode 'none') should be per-destination
   const [aggregationScope, setAggregationScope] = useState('per-destination'); // 'per-destination', 'cross-destination'
@@ -98,9 +98,82 @@ const NetworkGraph = React.memo(({
   const graphContainerRef = useRef(null); // Ref for capturing the graph
   const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
   const networkRef = useRef(null);
+  const [layoutOptimization, setLayoutOptimization] = useState('minimal-crossings');
+
  
 
-  const { filteredData: filteredByHook } = useGraphData(pathData, {
+  // Cache-first: try to build path data from in-memory cache for current range
+  const [cachedPathData, setCachedPathData] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Warm cache for last 30 days in background
+        const destStrings = (Array.isArray(selectedDestinations) ? selectedDestinations : []).map(d =>
+          typeof d === 'string' ? d : (d?.address || (d?.id != null ? String(d.id) : null))
+        ).filter(Boolean);
+        dataRepository.prefetchLast30Days(destStrings);
+
+        const params = {
+          destinations: destStrings,
+          start_date: dateRange?.start?.toISOString?.(),
+          end_date: dateRange?.end?.toISOString?.()
+        };
+        const cached = dataRepository.getCachedNetworkData(params, {
+          selectedDestinations: destStrings
+        });
+        if (!cancelled) setCachedPathData(cached || null);
+      } catch {
+        if (!cancelled) setCachedPathData(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDestinations, dateRange?.start, dateRange?.end]);
+
+  // Prefer server-provided prop data when available; fall back to cache when prop is empty
+  const effectivePathData = useMemo(() => {
+    const hasProp = pathData && typeof pathData === 'object' && Object.keys(pathData).length > 0;
+    return hasProp ? pathData : (cachedPathData || pathData || null);
+  }, [pathData, cachedPathData]);
+
+  // Normalize selected destinations to match keys in effectivePathData (prefer destination address over id)
+  const normalizedDestinations = useMemo(() => {
+    const input = Array.isArray(selectedDestinations) ? selectedDestinations : [];
+    const keySet = effectivePathData && typeof effectivePathData === 'object'
+      ? new Set(Object.keys(effectivePathData))
+      : null;
+    const out = [];
+    for (const d of input) {
+      let candidate = null;
+      if (typeof d === 'string') {
+        candidate = d;
+      } else if (d && typeof d === 'object') {
+        candidate = d.address || (d.id != null ? String(d.id) : null);
+      }
+      if (!candidate) continue;
+      // Lowercase to match transformer keys (addresses are lowercased in transform)
+      const lc = typeof candidate === 'string' ? candidate.toLowerCase() : candidate;
+      // If we know the keys, prefer matches; otherwise accept the candidate
+      if (keySet) {
+        if (typeof lc === 'string' && keySet.has(lc)) {
+          out.push(lc);
+          continue;
+        }
+        // If the object had both address and id, address would have been used already
+        // Fall through to include the candidate to avoid dropping selections entirely
+      }
+      out.push(lc);
+    }
+    const unique = Array.from(new Set(out));
+    if (keySet && unique.length === 0) {
+      // Fallback to all available keys to avoid empty/incomplete graphs due to key mismatch
+      return Array.from(keySet);
+    }
+    return unique;
+  }, [selectedDestinations, effectivePathData]);
+
+  const { filteredData: filteredByHook } = useGraphData(effectivePathData, {
     minRTT,
     maxRTT,
     minUsagePercent,
@@ -149,20 +222,25 @@ const NetworkGraph = React.memo(({
   // Handle aggregation mode changes
   const handleAggregationModeChange = useCallback((mode) => {
     setAggregationMode(mode);
-    // Reset expanded groups when changing mode
     setExpandedPrefixes(new Set());
     setExpandedAsnGroups(new Set());
-    // Auto-enable prefix aggregation when switching to prefix mode
+
     if (mode === 'prefix') {
       setShowPrefixAggregation(true);
     } else if (mode === 'none') {
       setShowPrefixAggregation(false);
     }
-    // Automatic scope selection:
-    // Show All Paths (none) -> per-destination
-    // Shared IPs -> cross-destination
-    if (mode === 'none') setAggregationScope('per-destination');
-    else if (mode === 'shared-ips') setAggregationScope('cross-destination');
+
+    if (mode === 'none') {
+      // Show All Paths
+      setAggregationScope('per-destination');
+      setLayoutOptimization('all-paths');
+    } else {
+      if (mode === 'shared-ips') {
+        setAggregationScope('cross-destination');
+      }
+      setLayoutOptimization('minimal-crossings');
+    }
   }, []);
 
 
@@ -187,9 +265,28 @@ const NetworkGraph = React.memo(({
   }, []);
 
   // Create a stable key for the graph to force re-creation when needed
+  // Lightweight data signature so Graph remounts cleanly when the underlying dataset source changes (cache vs fresh)
+  const dataSig = useMemo(() => {
+    try {
+      if (!effectivePathData || typeof effectivePathData !== 'object') return 'null';
+      const dests = Object.keys(effectivePathData).sort();
+      const parts = [String(dests.length)];
+      for (const d of dests) {
+        const dp = effectivePathData[d] || {};
+        const priLen = Array.isArray(dp?.primary_path?.path) ? dp.primary_path.path.length : 0;
+        const altCount = Array.isArray(dp?.alternatives) ? dp.alternatives.length : 0;
+        const total = dp?.total_traces || 0;
+        parts.push(`${d}:${priLen}:${altCount}:${total}`);
+      }
+      return parts.join(';');
+    } catch {
+      return 'sig-error';
+    }
+  }, [effectivePathData]);
+
   const graphKey = useMemo(() => {
     const keyParts = [
-      selectedDestinations.sort().join(','),
+      normalizedDestinations.slice().sort().join(','),
       dateRange.start?.toISOString() || 'null',
       dateRange.end?.toISOString() || 'null',
       showPrimaryOnly.toString(),
@@ -197,10 +294,10 @@ const NetworkGraph = React.memo(({
       maxRTT,
       minUsagePercent,
       selectedPathTypes.sort().join(','),
-  (selectedProtocols && selectedProtocols.length
-   ? selectedProtocols.slice().sort().join(',')
-   : 'ALL'),
-  hideTimeouts.toString(),          
+      (selectedProtocols && selectedProtocols.length
+        ? selectedProtocols.slice().sort().join(',')
+        : 'ALL'),
+      hideTimeouts.toString(),
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
@@ -209,16 +306,18 @@ const NetworkGraph = React.memo(({
       aggregationMode,
       aggregationScope,
       networkHierarchy,
-      Array.from(expandedAsnGroups).sort().join(',')
+      Array.from(expandedAsnGroups).sort().join(','),
+      // Include data signature to force clean remount when data source/content changes
+      `DATA:${dataSig}`
     ];
     return keyParts.join('|');
- }, [selectedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups]);
+  }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
 
 
 
   const { graph, nodeDetails, pathMapping } = useNetworkGraphModel({
     filteredByHook,
-    selectedDestinations,
+    selectedDestinations: normalizedDestinations,
     dateRange,
     showPrimaryOnly,
     showPrefixAggregation,
@@ -280,7 +379,6 @@ const NetworkGraph = React.memo(({
     }
   }, [networkInstance, isFullscreen, dimensions]);
 
-  const [layoutOptimization] = useState('minimal-crossings');
 
   const options = useMemo(() => {
     const baseOptions = {
@@ -289,9 +387,28 @@ const NetworkGraph = React.memo(({
         margin: 10,
         chosen: {
           node: function (values, id, selected, hovering) {
-            values.borderColor = '#2196F3';
-            values.borderWidth = 2;
-            
+            // Preserve existing per-node border logic (timeout vs normal) when selected
+            // Fallback to original blue if node not found
+            try {
+              const node = graph?.nodes?.find(n => n.id === id);
+              if (node) {
+                if (node.nodeType === 'timeout') {
+                  values.borderColor = '#FF3333';
+                } else {
+                  // Use existing computed highlight border or default
+                  values.borderColor = node.color?.border || '#07852aff';
+                }
+                // Slightly increase border width on selection for emphasis
+                const baseWidth = node.borderWidth || 2;
+                values.borderWidth = selected ? baseWidth + 1 : baseWidth;
+              } else {
+                values.borderColor = '#2196F3';
+                values.borderWidth = 2;
+              }
+            } catch (e) {
+              values.borderColor = '#2196F3';
+              values.borderWidth = 2;
+            }
           }
         }
       },
@@ -305,7 +422,7 @@ const NetworkGraph = React.memo(({
       layout: { improvedLayout: true }
     };
 
-    switch (layoutOptimization) {
+  switch (layoutOptimization) {
       case 'minimal-crossings':
         return {
           ...baseOptions,
@@ -315,9 +432,9 @@ const NetworkGraph = React.memo(({
               direction: "LR",
               sortMethod: "directed",
               shakeTowards: "root",
-              nodeSpacing: 60,
-              treeSpacing: 4000,
-              levelSeparation: 320,
+              nodeSpacing: 140,
+              treeSpacing: 120,
+              levelSeparation: 200,
               blockShifting: true,
               edgeMinimization: true,
               parentCentralization: true
@@ -334,7 +451,7 @@ const NetworkGraph = React.memo(({
           }
         };
 
-      case 'ultra-clean':
+      case 'all-paths':
         return {
           ...baseOptions,
           layout: {
@@ -343,9 +460,9 @@ const NetworkGraph = React.memo(({
               direction: "LR",
               sortMethod: "directed",
               shakeTowards: "leaves",
-              nodeSpacing: 90,
-              treeSpacing: 40,
-              levelSeparation: 320,
+              nodeSpacing: 140,
+              treeSpacing: 120,
+              levelSeparation: 200,
               blockShifting: true,
               edgeMinimization: true,
               parentCentralization: true
@@ -361,7 +478,7 @@ const NetworkGraph = React.memo(({
       default:
         return baseOptions;
     }
-  }, [layoutOptimization]);
+  }, [layoutOptimization, graph]);
 
   // Enhanced hop selection handler that fetches IP geolocation data
   const handleHopSelection = useCallback(async (nodeData) => {

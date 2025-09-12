@@ -41,33 +41,33 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     return JSON.stringify(fetchParams) !== JSON.stringify(lastFetchParams);
   }, [fetchParams, lastFetchParams]);
 
-    const loadNetworkData = useCallback(async () => {
+     const loadNetworkData = useCallback(async () => {
     if (!shouldFetch) return;
 
     try {
-      setLoading(true);
-      setError(null);
-
-      // 1) Try cache-first render for instant UI if available
+      // 1) Cache-first
       const cached = dataRepository.getCachedNetworkData(fetchParams);
-      if (cached && Object.keys(cached).length > 0) {
+      const hadCached = cached && Object.keys(cached).length > 0;
+      if (hadCached) {
         setPathData(cached);
+        setLoading(false);  // do not block UI
+      } else {
+        setLoading(true);
+        setError(null);
       }
 
-      // 2) Fetch and cache from backend (stale-while-revalidate)
+      // 2) Background refresh (aggregated API)
       const fresh = await dataRepository.fetchAndCacheAggregated(fetchParams);
       setPathData(fresh);
       setLastFetchParams(fetchParams);
 
-      // 3) Background prefetch for last 30 days (per requirement)
-      //    This does not affect current render.
+      // 3) Keep last-30-days warm
       const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
       dataRepository.prefetchLast30Days(destinationStrings);
     } catch (err) {
-      console.error('Error loading network data:', err);
-      setError(err.message || 'Failed to load network data');
-      setPathData({});
-      setLastFetchParams(fetchParams);
+      if (!pathData || Object.keys(pathData).length === 0) {
+        setError(err.message || 'Failed to load network data');
+      }
     } finally {
       setLoading(false);
     }

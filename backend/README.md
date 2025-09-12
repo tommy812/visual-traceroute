@@ -170,6 +170,41 @@ The API includes comprehensive error handling:
 
 ## 📈 Next Steps
 
+## 🗃 Caching Strategy
+
+The backend ships with two lightweight in-memory caches:
+
+1. 30‑day raw trace run slice cache (`cache/networkDataCache.js`)
+2. Aggregated paths query cache (`cache/aggregatedCache.js`)
+
+These improve latency and reduce database pressure. However, the frontend also implements a cache (see `frontend/src/services/networkDataCache.js` & `dataRepository.js`) that supports stale‑while‑revalidate behavior and background prefetch of the last 30 days.
+
+### Frontend‑Only Mode
+
+If you want all caching to occur exclusively in the browser, set:
+
+```
+FRONTEND_CACHE_ONLY=1
+```
+
+When this flag is enabled:
+- Backend caches become no-ops (they never store or return entries)
+- Controllers continue to call the same cache APIs without modification
+- Logging with `CACHE_DEBUG=1` will indicate that caches are disabled
+
+This mode is useful if you deploy multiple stateless backend instances without a shared cache layer (e.g. Redis) and prefer to avoid inconsistent cache behavior.
+
+### Debugging
+
+Enable verbose logging of cache actions:
+
+```
+CACHE_DEBUG=1
+```
+
+### Future Improvements
+To add a distributed cache later, you can replace the in-memory classes with Redis (keeping the same method signatures) without touching controller logic.
+
 1. **Data Processing**: Implement data transformation from database format to frontend format
 2. **Caching**: Add Redis caching for better performance
 3. **Authentication**: Add user authentication if needed

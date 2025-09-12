@@ -196,12 +196,15 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
       const activeInPaths = highlightedPaths.filter(p => p.nodes.includes(n.id));
       if (activeInPaths.length > 0) {
         const isPrimaryPath = activeInPaths.some(p => p.isPrimary);
+
         return {
           ...n,
           color: {
             ...n.color,
             background: isPrimaryPath ? '#FFD700' : '#FFA500',
-            border: '#333'
+            // Border color: red if node timed out, else green
+            border: n.nodeType === 'timeout' ? '#FF3333' : '#07852aff'
+            
           },
           font: { ...n.font, color: '#000', strokeWidth: 2, strokeColor: '#fff' },
           borderWidth: isPrimaryPath ? 3 : 2
