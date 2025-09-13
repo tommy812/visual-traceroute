@@ -216,7 +216,7 @@ const GraphControls = ({
             Path Aggregation:
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
-            {['none', 'shared-ips', 'asn'].map(mode => (
+            {['none', 'shared-ips'].map(mode => (
               <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
                 <input
                   type="radio"
@@ -226,8 +226,7 @@ const GraphControls = ({
                   onChange={(e) => onAggregationModeChange(e.target.value)}
                   style={{ margin: 0, cursor: 'pointer' }}
                 />
-                {mode === 'none' ? '📊 Show All Paths' : 
-                 mode === 'shared-ips' ? '🔗 Shared IPs' : '🏢 ASN'}
+                {mode === 'none' ? '📊 Show All Paths' : '🔗 Shared IPs'}
               </label>
             ))}
           </div>
@@ -237,7 +236,7 @@ const GraphControls = ({
             Network Hierarchy:
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
-            {['none', 'subnet', 'isp-pop', 'isp'].map(hierarchy => (
+            {['none', 'asn', 'subnet', 'isp-pop', 'isp'].map(hierarchy => (
               <label key={hierarchy} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
                 <input
                   type="radio"
@@ -248,15 +247,17 @@ const GraphControls = ({
                   style={{ margin: 0, cursor: 'pointer' }}
                 />
                 {hierarchy === 'none' ? '🔸 Individual IPs' : 
-                 hierarchy === 'subnet' ? '🌐 Subnets (/64)' :
-                 hierarchy === 'isp-pop' ? '🏢 ISP POP (/48)' : '🌍 ISP (/32)'}
+                 hierarchy === 'asn' ? '🏢 ASN' :
+                 hierarchy === 'subnet' ? '🌐 Prefix (/64)' :
+                 hierarchy === 'isp-pop' ? '🏢 Prefix (/48)' : '🌍 Prefix (/32)'
+                 }
               </label>
             ))}
           </div>
           
           
           {/* Prefix aggregation toggle - show when network hierarchy is selected */}
-          {networkHierarchy !== 'none' && (
+          {networkHierarchy !== 'none' && networkHierarchy !== 'asn' && (
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer', marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee' }}>
               <input
                 type="checkbox"
@@ -284,7 +285,7 @@ const GraphControls = ({
               </button>
             </div>
           )}
-          {(networkHierarchy !== 'none' || aggregationMode === 'asn') && (
+          {networkHierarchy !== 'none' && (
             <div style={{ fontSize: isFullscreen ? '9px' : '8px', color: '#888', marginLeft: '8px', fontStyle: 'italic' }}>
               Click grouped nodes to expand/collapse
             </div>

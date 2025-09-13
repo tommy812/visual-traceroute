@@ -25,6 +25,8 @@ export const useFilters = () => {
     setSelectedProtocols([]);
     setShowPrimaryOnly(false);
     setHideTimeouts(false);
+  setShowReachedOnly(false);
+  setShowUnreachedOnly(false);
   }, []);
 
   // Memoize the filters object to prevent unnecessary re-renders
@@ -36,7 +38,9 @@ export const useFilters = () => {
     selectedPathTypes,
     selectedProtocols,
     showPrimaryOnly,
-    hideTimeouts
+  hideTimeouts,
+  showReachedOnly,
+  showUnreachedOnly
   }), [
     destinationSearchTerm,
     minRTT,
@@ -45,7 +49,9 @@ export const useFilters = () => {
     selectedPathTypes,
     selectedProtocols,
     showPrimaryOnly,
-    hideTimeouts
+  hideTimeouts,
+  showReachedOnly,
+  showUnreachedOnly
   ]);
 
   // Memoize the setters to provide stable references

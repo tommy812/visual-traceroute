@@ -42,6 +42,8 @@ const Sidebar = ({
   setShowPrimaryOnly,
   hideTimeouts,
   setHideTimeouts,
+  showReachedOnly,
+  setShowReachedOnly,
 
   // Actions
   onResetFilters,
@@ -115,6 +117,8 @@ const Sidebar = ({
         showPrimaryOnly={showPrimaryOnly}
         hideTimeouts={hideTimeouts}          // NEW
         setHideTimeouts={setHideTimeouts}  
+  showReachedOnly={showReachedOnly}
+  setShowReachedOnly={setShowReachedOnly}
         setShowPrimaryOnly={setShowPrimaryOnly}
         onReset={onResetFilters}
       />

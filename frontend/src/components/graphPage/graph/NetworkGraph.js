@@ -79,7 +79,8 @@ const NetworkGraph = React.memo(({
   minUsagePercent = '',
   selectedPathTypes = ['PRIMARY', 'ALTERNATIVE'],
   selectedProtocols = [],
-  hideTimeouts = false
+  hideTimeouts = false,
+  showReachedOnly = false
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
@@ -94,7 +95,7 @@ const NetworkGraph = React.memo(({
   const [expandedAsnGroups, setExpandedAsnGroups] = useState(new Set()); // Track expanded ASN groups
   
   // Network hierarchy controls (separate from path aggregation)
-  const [networkHierarchy, setNetworkHierarchy] = useState('none'); // 'none', 'subnet', 'isp-pop', 'isp'
+  const [networkHierarchy, setNetworkHierarchy] = useState('none'); // 'none', 'asn', 'subnet', 'isp-pop', 'isp'
   const graphContainerRef = useRef(null); // Ref for capturing the graph
   const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
   const networkRef = useRef(null);
@@ -104,10 +105,11 @@ const NetworkGraph = React.memo(({
 
   // Cache-first: try to build path data from in-memory cache for current range
   const [cachedPathData, setCachedPathData] = useState(null);
+  const [freshPathData, setFreshPathData] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+  (async () => {
       try {
         // Warm cache for last 30 days in background
         const destStrings = (Array.isArray(selectedDestinations) ? selectedDestinations : []).map(d =>
@@ -115,27 +117,49 @@ const NetworkGraph = React.memo(({
         ).filter(Boolean);
         dataRepository.prefetchLast30Days(destStrings);
 
-        const params = {
+  const params = {
           destinations: destStrings,
           start_date: dateRange?.start?.toISOString?.(),
           end_date: dateRange?.end?.toISOString?.()
         };
+  const usePerRun = aggregationMode === 'none' || aggregationMode === 'shared-ips' || aggregationMode === 'asn' || networkHierarchy === 'asn';
         const cached = dataRepository.getCachedNetworkData(params, {
-          selectedDestinations: destStrings
+          // Ensure cache respects current protocol selection
+          selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],
+          // If current view needs ASN, require cached runs to include hop.asn
+    requireASN: aggregationMode === 'asn' || networkHierarchy === 'asn',
+          // In Show All Paths and Shared IPs, use per-run transformation
+          transformMode: usePerRun ? 'per-run' : undefined
         });
         if (!cancelled) setCachedPathData(cached || null);
+
+  // For Show All Paths, Shared IPs, and ASN (via aggregation or hierarchy), prefer fresh per-run data over aggregated prop
+        if (usePerRun) {
+          const fresh = await dataRepository.fetchAndCacheNetworkData(params, {
+            selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],
+            transformMode: 'per-run'
+          });
+          if (!cancelled) setFreshPathData(fresh || null);
+        } else {
+          if (!cancelled) setFreshPathData(null);
+        }
       } catch {
-        if (!cancelled) setCachedPathData(null);
+        if (!cancelled) { setCachedPathData(null); setFreshPathData(null); }
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedDestinations, dateRange?.start, dateRange?.end]);
+  }, [selectedDestinations, dateRange?.start, dateRange?.end, selectedProtocols, aggregationMode, networkHierarchy]);
 
   // Prefer server-provided prop data when available; fall back to cache when prop is empty
   const effectivePathData = useMemo(() => {
+  // In Show All Paths, Shared IPs, and ASN (including when selected under Network Hierarchy): prefer fresh per-run, then cached per-run; ignore aggregated prop
+  if (aggregationMode === 'none' || aggregationMode === 'shared-ips' || aggregationMode === 'asn' || networkHierarchy === 'asn') {
+      return freshPathData || cachedPathData || null;
+    }
+    // Aggregated modes: use provided aggregated data or cache fallback
     const hasProp = pathData && typeof pathData === 'object' && Object.keys(pathData).length > 0;
     return hasProp ? pathData : (cachedPathData || pathData || null);
-  }, [pathData, cachedPathData]);
+  }, [aggregationMode, networkHierarchy, pathData, cachedPathData, freshPathData]);
 
   // Normalize selected destinations to match keys in effectivePathData (prefer destination address over id)
   const normalizedDestinations = useMemo(() => {
@@ -180,7 +204,8 @@ const NetworkGraph = React.memo(({
     selectedPathTypes,
     showPrimaryOnly,
     selectedProtocols,
-    hideTimeouts
+  hideTimeouts,
+  showReachedOnly
   });
 
 
@@ -249,6 +274,13 @@ const NetworkGraph = React.memo(({
     setNetworkHierarchy(hierarchy);
     // Reset expanded prefixes when changing hierarchy
     setExpandedPrefixes(new Set());
+    // Auto-toggle prefix grouping based on hierarchy selection
+    if (hierarchy === 'none' || hierarchy === 'asn') {
+      setShowPrefixAggregation(false);
+    } else {
+      // subnet / isp-pop / isp
+      setShowPrefixAggregation(true);
+    }
   }, []);
 
   // Handle ASN group toggle
@@ -270,7 +302,7 @@ const NetworkGraph = React.memo(({
     try {
       if (!effectivePathData || typeof effectivePathData !== 'object') return 'null';
       const dests = Object.keys(effectivePathData).sort();
-      const parts = [String(dests.length)];
+      const parts = [String(dests.length), `mode:${aggregationMode}`];
       for (const d of dests) {
         const dp = effectivePathData[d] || {};
         const priLen = Array.isArray(dp?.primary_path?.path) ? dp.primary_path.path.length : 0;
@@ -282,7 +314,7 @@ const NetworkGraph = React.memo(({
     } catch {
       return 'sig-error';
     }
-  }, [effectivePathData]);
+  }, [effectivePathData, aggregationMode]);
 
   const graphKey = useMemo(() => {
     const keyParts = [
@@ -297,7 +329,8 @@ const NetworkGraph = React.memo(({
       (selectedProtocols && selectedProtocols.length
         ? selectedProtocols.slice().sort().join(',')
         : 'ALL'),
-      hideTimeouts.toString(),
+  hideTimeouts.toString(),
+  showReachedOnly.toString(),
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
       `${dimensions.width}x${dimensions.height}`,
@@ -311,7 +344,7 @@ const NetworkGraph = React.memo(({
       `DATA:${dataSig}`
     ];
     return keyParts.join('|');
-  }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
+  }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, showReachedOnly, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
 
 
 

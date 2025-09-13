@@ -60,11 +60,31 @@ class DataTransformer {
 
     return templatePath.map((templateHop, hopIndex) => {
       const allRtts = [];
+      const asnCounts = new Map();
       pathGroup.forEach(p => {
-        if (p.path[hopIndex] && Array.isArray(p.path[hopIndex].rtt_ms)) {
-          allRtts.push(...p.path[hopIndex].rtt_ms);
+        const hop = p.path[hopIndex];
+        if (hop && Array.isArray(hop.rtt_ms)) {
+          allRtts.push(...hop.rtt_ms);
+        }
+        if (hop && hop.asn != null) {
+          const key = String(hop.asn);
+          asnCounts.set(key, (asnCounts.get(key) || 0) + 1);
         }
       });
+
+      // choose most common ASN at this index across grouped paths
+      let commonAsn = null;
+      if (asnCounts.size > 0) {
+        const arr = [...asnCounts.entries()].sort((a, b) => {
+          if (b[1] !== a[1]) return b[1] - a[1];
+          const an = parseInt(a[0], 10), bn = parseInt(b[0], 10);
+          if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+          return String(a[0]).localeCompare(String(b[0]));
+        });
+        commonAsn = arr[0][0];
+        const n = parseInt(commonAsn, 10);
+        if (!Number.isNaN(n)) commonAsn = n;
+      }
 
       return {
         hop_number: templateHop.hop_number,
@@ -73,7 +93,9 @@ class DataTransformer {
         rtt_ms: allRtts.length > 0 ? allRtts : (templateHop.rtt_ms || []),
         is_timeout: templateHop.is_timeout,
         // preserve hop protocol so frontend can match by hop-level protocol
-        protocol: templateHop.protocol ?? null
+        protocol: templateHop.protocol ?? null,
+        // carry aggregated ASN
+        asn: (templateHop.asn != null ? templateHop.asn : commonAsn) ?? null
       };
     });
   }
@@ -166,7 +188,9 @@ class DataTransformer {
       rtt_ms: this.convertRttToArray(hop.rtt1, hop.rtt2, hop.rtt3),
       is_timeout: !hop.ip || hop.ip === 'null' || hop.ip === null,
       // keep hop-level protocol aligned with run protocol
-      protocol: pathProtocol
+  protocol: pathProtocol,
+  // NEW: carry hop ASN from backend
+  asn: hop.asn != null ? hop.asn : null
     }));
 
     const avgRtt = this.calculatePathAverageRtt(path);

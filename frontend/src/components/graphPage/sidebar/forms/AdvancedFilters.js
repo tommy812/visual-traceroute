@@ -150,6 +150,15 @@ const AdvancedFilters = ({
           />
           <span style={{ fontSize: "11px" }}>Hide Timed-out Paths</span>
         </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", marginTop: "6px" }}>
+          <input
+            type="checkbox"
+            checked={showReachedOnly}
+            onChange={(e) => setShowReachedOnly(e.target.checked)}
+            style={{ margin: 0, transform: "scale(0.8)" }}
+          />
+          <span style={{ fontSize: "11px" }}>Only Successful Paths</span>
+        </label>
       </div>
 
       <div style={{ marginBottom: "10px" }}>

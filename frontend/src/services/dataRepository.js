@@ -19,7 +19,12 @@ function toDate(value) {
   return value ? new Date(value) : null;
 }
 
-function transformAndValidate(rawRuns, opts = {}) {
+function transformWithMode(rawRuns, opts = {}) {
+  // When explicitly requested, return per-run (no aggregation) view
+  if (opts.transformMode === 'per-run') {
+    return dataTransformer.transformWithNoAggregation(rawRuns, opts);
+  }
+  // Default aggregated destination view
   const transformed = dataTransformer.transformNetworkData(rawRuns, opts);
   // If available in your transformer, keep validation step:
   const validated = dataTransformer.validateTransformedData
@@ -35,13 +40,18 @@ const dataRepository = {
     const end = toDate(end_date);
     const raw = networkDataCache.getRunsInRange(destinations, start, end);
     if (!raw.length) return null;
+    // Optional capability checks: if a view requires ASN but cache lacks it, skip cache
+    if (opts.requireASN) {
+      const hasAnyAsn = raw.some(run => Array.isArray(run?.hops) && run.hops.some(h => h && (h.asn !== undefined && h.asn !== null)));
+      if (!hasAnyAsn) return null;
+    }
     // Apply protocol filter (and other initial filters) before transforming
     const filteredRaw = dataTransformer.applyInitialFilters
       ? dataTransformer.applyInitialFilters(raw, {
           selectedProtocols: Array.isArray(opts.selectedProtocols) ? opts.selectedProtocols : []
         })
       : raw;
-    return transformAndValidate(filteredRaw, opts);
+    return transformWithMode(filteredRaw, opts);
   },
 
   // Fetch from API, cache raw, return transformed
@@ -59,7 +69,7 @@ const dataRepository = {
     if (sameStart && sameEnd) {
       networkDataCache.markCoverageLast30Days(destinations);
     }
-    return transformAndValidate(rawRuns, opts);
+    return transformWithMode(rawRuns, opts);
   },
   
   fetchAndCacheAggregated: async (params) => {

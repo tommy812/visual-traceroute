@@ -207,7 +207,7 @@ class TracerouteController {
           domain:domain_id ( id, name )
         ),
         hops(
-          id, hop_number, ip, hostname, rtt1, rtt2, rtt3, extra
+          id, hop_number, ip, hostname, rtt1, rtt2, rtt3, asn, extra
         )
       `;
 
@@ -808,7 +808,7 @@ class TracerouteController {
     if (sampleRun) {
       const { data: hopsData, error: hopsErr } = await supabase
         .from('hops')
-        .select('hop_number, ip, hostname, rtt1, rtt2, rtt3')
+  .select('hop_number, ip, hostname, rtt1, rtt2, rtt3, asn')
         .eq('trace_run_id', sampleRun)
         .order('hop_number');
       if (hopsErr) throw hopsErr;
@@ -830,7 +830,8 @@ class TracerouteController {
         hostname: h.hostname,
         rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
         is_timeout: !h.ip,
-        protocol: row.protocol
+        protocol: row.protocol,
+        asn: h.asn ?? null
       }));
     }
     const percent = totalRunsForPercent

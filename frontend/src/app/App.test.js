@@ -1,8 +1,8 @@
 import { render, screen } from '@testing-library/react';
-import App from './App';
+import AppWithErrorBoundary from './App';
 
-test('renders learn react link', () => {
-  render(<App />);
-  const linkElement = screen.getByText(/learn react/i);
-  expect(linkElement).toBeInTheDocument();
+test('renders landing page and CTA', () => {
+  render(<AppWithErrorBoundary />);
+  expect(screen.getByText(/Network Traceroute Visualization/i)).toBeInTheDocument();
+  expect(screen.getByText(/Open Charts/i)).toBeInTheDocument();
 });

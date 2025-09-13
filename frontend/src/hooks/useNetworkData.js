@@ -99,3 +99,23 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
 
   return result;
 }; 
+
+// Optional helper: fetch per-run (no aggregation) data on demand
+export async function fetchPerRunNetworkData(selectedDestinations, dateRange, selectedProtocols) {
+  if (!Array.isArray(selectedDestinations) || selectedDestinations.length === 0) return {};
+  const destinationStrings = selectedDestinations.map(dest => {
+    if (typeof dest === 'string') return dest;
+    if (dest && dest.id != null) return String(dest.id);
+    return dest?.address;
+  }).filter(Boolean);
+  const params = {
+    destinations: destinationStrings,
+    start_date: dateRange.start?.toISOString(),
+    end_date: dateRange.end?.toISOString()
+  };
+  const opts = {
+    selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],
+    transformMode: 'per-run'
+  };
+  return await dataRepository.fetchAndCacheNetworkData(params, opts);
+}

@@ -132,8 +132,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     if (!ip || ip === 'Unknown' || ipGeoData[ip]) return;
 
     try {
-      const geoData = await ipGeoService.getIPInfo(ip);
-      setIpGeoData(prev => ({ ...prev, [ip]: geoData }));
+  const raw = await ipGeoService.getIPInfo(ip);
+  const geoData = ipGeoService.formatIPInfo(raw);
+  setIpGeoData(prev => ({ ...prev, [ip]: geoData || null }));
     } catch (error) {
       console.error(`Error fetching geo data for ${ip}:`, error);
       setIpGeoData(prev => ({ ...prev, [ip]: { error: 'Failed to load location data' } }));
@@ -164,7 +165,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     );
   }, [processedHopData]);
 
-  // Fetch PeeringDB on ASN change (must be before any early return)
+  // Fetch PeeringDB on ASN change (prefer hop ASN, fallback to geo ASN)
   useEffect(() => {
     let cancelled = false;
 
@@ -173,9 +174,13 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
       setPdbCaps(null);
       setPdbAsn(null);
 
-      if (!isOpen || !currentGeoData?.asn) return;
+      if (!isOpen) return;
 
-      const asnNum = peeringDbService.parseAsnNumber(currentGeoData.asn);
+      const firstHop = Array.isArray(hopData) && hopData.length ? hopData[0] : null;
+      const rawAsn = firstHop?.asn ?? currentGeoData?.asn;
+      if (!rawAsn) return;
+
+      const asnNum = peeringDbService.parseAsnNumber(rawAsn);
       if (!asnNum) return;
 
       setPdbLoading(true);
@@ -205,7 +210,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
     run();
     return () => { cancelled = true; };
-  }, [isOpen, currentGeoData?.asn]);
+  }, [isOpen, currentGeoData?.asn, hopData]);
 
   // Early return if no data (after all hooks)
   if (!processedHopData) {
@@ -572,8 +577,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             </div>
           </div>
         )}
-        {/* PeeringDB Section (when ASN is available) */}
-        {currentGeoData && pdbAsn && (
+  {/* PeeringDB Section (when ASN is available) */}
+  {pdbAsn && (
           <div style={{ marginBottom: '20px' }}>
             <h4 style={{ margin: '0 0 10px 0', color: '#2c3e50', fontSize: '16px' }}>
               🤝 Peering Information (ASN {pdbAsn})
@@ -931,22 +936,34 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 <div style={{ marginBottom: '5px' }}>
                   🧪 <strong>Protocol:</strong> {hop.protocol || 'Unknown'}
                 </div>
-                {hop.timestamp && (
+                <div style={{ marginBottom: '5px' }}>
+                  🏢 <strong>ASN:</strong>{' '}
+                  {(() => {
+                    const raw = (hop.asn != null && hop.asn !== '') ? hop.asn : currentGeoData?.asn;
+                    const num = peeringDbService.parseAsnNumber(raw);
+                    return num ? `AS${num}` : 'Unknown';
+                  })()}
+                </div>
+                {(hop.timestamp || (Array.isArray(hop.pathTimestamps) && hop.pathTimestamps.length)) && (
                   <div style={{ marginBottom: '5px' }}>
-                    📅 <strong>Timestamp:</strong>{' '}
-                    {showPerRun
-                      ? <span>{new Date(hop.timestamp).toLocaleString()}</span>
-                      : (
-                        <div>
-                          {(Array.isArray(hop.pathTimestamps) && hop.pathTimestamps.length
+                    📅 <strong>Timestamp{hop._perRun ? '' : 's'}:</strong>{' '}
+                    {hop._perRun ? (
+                      <span>{new Date(hop.timestamp).toLocaleString()}</span>
+                    ) : (
+                      <div>
+                        {(() => {
+                          const baseList = Array.isArray(hop.pathTimestamps) && hop.pathTimestamps.length
                             ? hop.pathTimestamps
-                            : [hop.timestamp]
-                          ).map((ts, i) => (
+                            : (hop.timestamp ? [hop.timestamp] : []);
+                          // Deduplicate and sort ascending for stable display
+                          const uniq = Array.from(new Set(baseList.filter(Boolean)));
+                          uniq.sort((a, b) => new Date(a) - new Date(b));
+                          return uniq.map((ts, i) => (
                             <div key={i}>{new Date(ts).toLocaleString()}</div>
-                          ))}
-                        </div>
-                      )
-                    }
+                          ));
+                        })()}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -962,7 +979,10 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 border: '1px solid #dee2e6'
               }}>
                 <div style={{ marginBottom: '8px' }}>
-                  <strong>⚡ Hop RTT:</strong> {hop.avgRtt}
+                  <strong>⚡ Hop RTT:</strong>{' '}
+                  {Array.isArray(hop.rtt_ms) && hop.rtt_ms.length
+                    ? `${(hop.rtt_ms.reduce((a, b) => a + b, 0) / hop.rtt_ms.length).toFixed(2)}ms`
+                    : 'N/A'}
                 </div>
                 {hop.rtt_ms && (
                   <div>

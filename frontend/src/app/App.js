@@ -221,6 +221,8 @@ const ChartsApp = React.memo(({onGoLanding}) => {
         setShowPrimaryOnly={filters.setShowPrimaryOnly}
         hideTimeouts={filters.hideTimeouts}                 
         setHideTimeouts={filters.setHideTimeouts}  
+  showReachedOnly={filters.showReachedOnly}
+  setShowReachedOnly={filters.setShowReachedOnly}
         onResetFilters={handleResetFilters}
         apiHealthy={apiHealthy}
         onOpenSettings={handleOpenSettings}
@@ -244,7 +246,8 @@ const ChartsApp = React.memo(({onGoLanding}) => {
               minUsagePercent={filters.minUsagePercent}
               selectedPathTypes={filters.selectedPathTypes}
               selectedProtocols={filters.selectedProtocols}
-              hideTimeouts={filters.hideTimeouts}  
+              hideTimeouts={filters.hideTimeouts}
+              showReachedOnly={filters.showReachedOnly}
             />
             <div style={{
               position: "absolute",
