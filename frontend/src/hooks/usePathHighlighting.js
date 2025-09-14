@@ -15,12 +15,13 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
   // Rebuild edges for a path (now includes source)
   const reconstructEdgesForPath = useCallback((pathId) => {
     if (!graph || !nodeDetails) return [];
-  const [dest, pathType] = pathId.split('-', 2);
     const hopEntries = [];
 
     nodeDetails.forEach((details, nodeId) => {
       details.forEach(d => {
-        if (d.pathId === pathId || (d.destination === dest && d.pathType === pathType)) {
+        // Strict match by pathId only to avoid mixing runs that share
+        // destination/pathType but have different hop sequences.
+        if (d.pathId === pathId) {
           hopEntries.push({ nodeId, hop: d.hopNumber ?? d.hop ?? null });
         }
       });
@@ -41,42 +42,51 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
     for (let i = 0; i < ordered.length - 1; i++) {
       const fromId = ordered[i].nodeId;
       const toId = ordered[i + 1].nodeId;
-      const edge = graph.edges.find(e => e.from === fromId && e.to === toId);
+      // There can be multiple parallel edges between the same endpoints
+      // (one per path). Prefer the edge whose pathMapping includes this pathId.
+      let edge = null;
+      const candidateEdges = graph.edges.filter(e => e.from === fromId && e.to === toId);
+      if (candidateEdges.length === 1) {
+        edge = candidateEdges[0];
+      } else if (candidateEdges.length > 1 && pathMapping) {
+        // Choose the one mapped to this pathId
+        edge = candidateEdges.find(e => {
+          const set = pathMapping.get(e.id);
+          return set && set.has(pathId);
+        }) || candidateEdges[0];
+      }
       if (edge) out.push({ from: edge.from, to: edge.to, id: edge.id });
     }
     return out;
-  }, [graph, nodeDetails, sourceId]);
+  }, [graph, nodeDetails, sourceId, pathMapping]);
 
   const collectForPathId = useCallback((pathId) => {
+    // Collect nodes that belong to the path from the mapping (order not guaranteed)
     const nodes = [];
-    const edges = [];
     pathMapping?.forEach((set, elementId) => {
       if (!set.has(pathId)) return;
-      if (typeof elementId === 'string' && elementId.startsWith('edge_')) {
-        const e = graph?.edges?.find(ed => ed.id === elementId);
-        if (e) edges.push({ from: e.from, to: e.to, id: e.id });
-      } else {
+      if (!(typeof elementId === 'string' && elementId.startsWith('edge_'))) {
         nodes.push(elementId);
       }
     });
 
-    // Ensure source node included
-    if (sourceId && !nodes.includes(sourceId)) {
-      nodes.unshift(sourceId);
-    }
+    // Ensure source node is present in nodes list
+    if (sourceId && !nodes.includes(sourceId)) nodes.unshift(sourceId);
 
-    // Fallback reconstruction (also ensures source→firstHop)
-    if (edges.length === 0) {
-      const rebuilt = reconstructEdgesForPath(pathId);
-      rebuilt.forEach(r => edges.push(r));
-    } else if (sourceId) {
-      // Add missing source edge if first edge doesn't start at source
-      const firstNonSource = nodes.find(id => id !== sourceId);
-      if (firstNonSource &&
-          !edges.some(e => e.from === sourceId && e.to === firstNonSource)) {
-        const srcEdge = graph.edges.find(e => e.from === sourceId && e.to === firstNonSource);
-        if (srcEdge) edges.unshift({ from: srcEdge.from, to: srcEdge.to, id: srcEdge.id });
-      }
+    // Always prefer reconstructing edges from hop order using nodeDetails
+    // This guarantees correct sequencing and prevents accidental source→randomNode links
+    let edges = reconstructEdgesForPath(pathId);
+
+    // If reconstruction fails (no nodeDetails), fall back to edges from mapping
+    if (!edges || edges.length === 0) {
+      edges = [];
+      pathMapping?.forEach((set, elementId) => {
+        if (!set.has(pathId)) return;
+        if (typeof elementId === 'string' && elementId.startsWith('edge_')) {
+          const e = graph?.edges?.find(ed => ed.id === elementId);
+          if (e) edges.push({ from: e.from, to: e.to, id: e.id });
+        }
+      });
     }
 
     return { nodes, edges };
@@ -244,8 +254,11 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
     });
 
     const edges = graph.edges.map(e => {
+      // Only match by unique edge id. Do NOT fall back to from/to because
+      // multiple parallel edges (one per path) can share endpoints, which
+      // would incorrectly highlight sibling edges not in the selected path(s).
       const matchingPaths = highlightedPaths.filter(p =>
-        p.edges.some(ed => (ed.id ? ed.id === e.id : (ed.from === e.from && ed.to === e.to)))
+        Array.isArray(p.edges) && p.edges.some(ed => ed.id === e.id)
       );
       if (matchingPaths.length > 0) {
         const primaryPath = matchingPaths.find(p => p.isPrimary);
@@ -279,6 +292,22 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
 
     return { nodes, edges };
   }, [graph, highlightedPaths]);
+
+  // Remap highlighted paths when graph/pathMapping changes (e.g., toggling
+  // between Show All Paths and Shared IPs). We rebuild edges from pathId so
+  // styling continues to apply to the correct per-path edges in the new graph.
+  useEffect(() => {
+    if (!graph || !pathMapping || highlightedPaths.length === 0) return;
+    const rebuilt = highlightedPaths.map(p => {
+      const { nodes, edges } = collectForPathId(p.id || p.pathId);
+      if (!edges || edges.length === 0) return null;
+      return { ...p, nodes, edges };
+    }).filter(Boolean);
+    if (rebuilt.length > 0) setHighlightedPaths(rebuilt);
+    else setHighlightedPaths([]);
+    // Only run when the structural inputs change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graph, pathMapping]);
 
   return {
     highlightedGraph,

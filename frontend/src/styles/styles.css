@@ -58,6 +58,7 @@ button:hover {
 input[type="checkbox"] {
   transform: scale(1.2);
   margin-right: 8px;
+  accent-color: #2196f3;
 }
 
 /* Network graph container */
@@ -236,6 +237,7 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 
 input[type="number"] {
+  appearance: textfield;
   -moz-appearance: textfield;
 }
 
@@ -251,12 +253,6 @@ button:active {
 }
 
 /* Improve checkbox styling */
-input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: #2196f3;
-}
-
 /* Add loading state styles */
 .loading {
   opacity: 0.6;

@@ -101,25 +101,15 @@ class ApiService {
   }
 
   async getAggregatedPaths(params = {}) {
-    const qs = new URLSearchParams();
-    if (params.destinations?.length) qs.set('destinations', params.destinations.join(','));
-    if (params.protocols?.length) qs.set('protocols', params.protocols.join(','));
-    if (params.start_date) qs.set('start_date', params.start_date);
-    if (params.end_date) qs.set('end_date', params.end_date);
-  // API_BASE_URL already contains /api/traceroute, so we just append the relative endpoint
-  const url = `${API_BASE_URL}/aggregated-paths?${qs.toString()}`;
-  const res = await fetch(url);
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) {
-      const text = await res.text();
-      throw new Error(`Unexpected response (content-type: ${ct}) body starts: ${text.slice(0, 80)}`);
-    }
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Aggregated paths error ${res.status}: ${body}`);
-    }
-    const json = await res.json();
-    return json.data || {};
+  const qs = new URLSearchParams();
+  if (params.destinations?.length) qs.set('destinations', params.destinations.join(','));
+  if (params.protocols?.length) qs.set('protocols', params.protocols.join(','));
+  if (params.start_date) qs.set('start_date', params.start_date);
+  if (params.end_date) qs.set('end_date', params.end_date);
+  const endpoint = `/aggregated-paths?${qs.toString()}`;
+  const res = await this.makeRequest(endpoint);
+  // Preserve previous return shape for callers: return the aggregated object directly
+  return res?.data || {};
   }
 
   // Health check

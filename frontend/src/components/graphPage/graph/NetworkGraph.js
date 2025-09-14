@@ -6,65 +6,13 @@ import GraphControls from './GraphControls';
 
 import { useNetworkGraphModel, useGraphData, usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
 import dataRepository from '../../../services/dataRepository';
+import ErrorBoundary from '../../ui/ErrorBoundary';
+import { buildVisOptions } from '../../../utils/visOptions';
 
 
 // Error Boundary for NetworkGraph
-class GraphErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error, errorInfo) {
-    console.error('NetworkGraph Error:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          height: '100%',
-          flexDirection: 'column',
-          padding: '20px',
-          backgroundColor: '#f8f9fa',
-          border: '1px solid #dee2e6',
-          borderRadius: '4px'
-        }}>
-          <div style={{ fontSize: '24px', marginBottom: '10px' }}>⚠️</div>
-          <div style={{ fontSize: '16px', fontWeight: 'bold', marginBottom: '8px', color: '#dc3545' }}>
-            Graph Rendering Error
-          </div>
-          <div style={{ fontSize: '14px', color: '#666', textAlign: 'center', marginBottom: '15px' }}>
-            There was an error rendering the network graph. Please try refreshing the page.
-          </div>
-          <button
-            onClick={() => window.location.reload()}
-            style={{
-              padding: '8px 16px',
-              fontSize: '14px',
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer'
-            }}
-          >
-            🔄 Refresh Page
-          </button>
-        </div>
-      );
-    }
-
-    return this.props.children;
-  }
-}
+// Reuse shared app error boundary
+const GraphErrorBoundary = (props) => <ErrorBoundary {...props} />;
 
 
 // Optimized NetworkGraph component with React.memo
@@ -414,24 +362,20 @@ const NetworkGraph = React.memo(({
 
 
   const options = useMemo(() => {
-    const baseOptions = {
+    const opts = buildVisOptions(layoutOptimization, graph);
+    // Preserve chosen.node behavior from previous inline config
+    return {
+      ...opts,
       nodes: {
-        font: { face: 'Arial' },
+        ...opts.nodes,
+        font: { face: 'Arial', ...(opts.nodes?.font || {}) },
         margin: 10,
         chosen: {
-          node: function (values, id, selected, hovering) {
-            // Preserve existing per-node border logic (timeout vs normal) when selected
-            // Fallback to original blue if node not found
+          node: function (values, id, selected) {
             try {
               const node = graph?.nodes?.find(n => n.id === id);
               if (node) {
-                if (node.nodeType === 'timeout') {
-                  values.borderColor = '#FF3333';
-                } else {
-                  // Use existing computed highlight border or default
-                  values.borderColor = node.color?.border || '#07852aff';
-                }
-                // Slightly increase border width on selection for emphasis
+                values.borderColor = node.nodeType === 'timeout' ? '#FF3333' : (node.color?.border || '#07852aff');
                 const baseWidth = node.borderWidth || 2;
                 values.borderWidth = selected ? baseWidth + 1 : baseWidth;
               } else {
@@ -444,69 +388,8 @@ const NetworkGraph = React.memo(({
             }
           }
         }
-      },
-      interaction: {
-        dragNodes: true,
-        zoomView: true,
-        dragView: true,
-        selectConnectedEdges: false
-      },
-      configure: { enabled: false },
-      layout: { improvedLayout: true }
+      }
     };
-
-  switch (layoutOptimization) {
-      case 'minimal-crossings':
-        return {
-          ...baseOptions,
-          layout: {
-            hierarchical: {
-              enabled: true,
-              direction: "LR",
-              sortMethod: "directed",
-              shakeTowards: "roots",
-              nodeSpacing: 140,
-              treeSpacing: 120,
-              levelSeparation: 200,
-              blockShifting: true,
-              edgeMinimization: true,
-              parentCentralization: true
-            }
-          },
-          physics: { enabled: false },
-          edges: {
-              smooth: false,
-            chosen: false
-          }
-        };
-
-      case 'all-paths':
-        return {
-          ...baseOptions,
-          layout: {
-            hierarchical: {
-              enabled: true,
-              direction: "LR",
-              sortMethod: "directed",
-              shakeTowards: "leaves",
-              nodeSpacing: 140,
-              treeSpacing: 120,
-              levelSeparation: 200,
-              blockShifting: true,
-              edgeMinimization: true,
-              parentCentralization: true
-            }
-          },
-          physics: { enabled: false },
-          edges: {
-            smooth: true, // Straight lines only
-            chosen: false
-          }
-        };
-
-      default:
-        return baseOptions;
-    }
   }, [layoutOptimization, graph]);
 
   // Enhanced hop selection handler that fetches IP geolocation data
