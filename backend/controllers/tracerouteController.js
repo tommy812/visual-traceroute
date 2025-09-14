@@ -64,7 +64,16 @@ class TracerouteController {
 
       // Filters
       if (destination && destination.trim()) {
-        query = query.ilike('destinations.address', `%${destination.trim()}%`);
+        const dest = destination.trim();
+        // If the destinations.address column is of type INET, ilike will fail.
+        // Detect IP (v4/v6) and use equality; otherwise use ilike for hostname substrings.
+        const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(dest);
+        const isIPv6 = dest.includes(':');
+        if (isIPv4 || isIPv6) {
+          query = query.eq('destinations.address', dest);
+        } else {
+          query = query.ilike('destinations.address', `%${dest}%`);
+        }
       }
 
       if (method_id) {
@@ -100,10 +109,48 @@ class TracerouteController {
     }
   }
 
+  // Get the latest trace run for a destination address (IPv4/IPv6)
+  async getLatestRunByDestination(req, res) {
+    try {
+      const { destination } = req.query;
+      if (!destination || !destination.trim()) {
+        return res.status(400).json({ success: false, error: 'destination is required' });
+      }
+      const dest = destination.trim();
+      const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(dest);
+      const isIPv6 = dest.includes(':');
+
+      let query = supabase
+        .from('trace_runs')
+        .select(`id,timestamp,raw_output,destination_id,destinations:destination_id(address)`) // lightweight
+        .order('timestamp', { ascending: false })
+        .limit(1);
+
+      if (isIPv4 || isIPv6) {
+        query = query.eq('destinations.address', dest);
+      } else {
+        // Fallback to hostname substring match when not an IP
+        query = query.ilike('destinations.address', `%${dest}%`);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      const first = Array.isArray(data) ? data[0] : null;
+      if (!first) return res.json({ success: true, data: null });
+      return res.json({ success: true, data: first });
+    } catch (error) {
+      console.error('Error fetching latest run by destination:', error);
+      res.status(500).json({ success: false, error: 'Failed to fetch latest run', details: error.message });
+    }
+  }
+
   // Get a specific trace run with its hops
   async getTraceRunById(req, res) {
     try {
       const { id } = req.params;
+      if (!/^\d+$/.test(String(id))) {
+        return res.status(400).json({ success: false, error: 'Invalid id' });
+      }
 
       const selectStr = `
       id,
@@ -124,7 +171,7 @@ class TracerouteController {
       const { data: traceRun, error: traceError } = await supabase
         .from('trace_runs')
         .select(selectStr)
-        .eq('id', id)
+  .eq('id', Number(id))
         .single();
 
       if (traceError) throw traceError;
@@ -219,16 +266,24 @@ class TracerouteController {
       // Destination filtering: accept ids or addresses
       if (destinations) {
         const raw = destinations;
-        const items = Array.isArray(raw) ? raw : String(raw).split(','); // handle arrays or comma-separated
-        const ids = items.filter(x => /^\d+$/.test(x));          // numeric ids
-        const addrs = items.filter(x => !/^\d+$/.test(x));       // addresses
+        const items = Array.isArray(raw) ? raw : String(raw).split(',');
+        const ids = items.filter(x => /^\d+$/.test(x));
+        const addrs = items.filter(x => !/^\d+$/.test(x));
 
         if (ids.length) query = query.in('destination_id', ids);
         if (addrs.length) {
-          // If both ids and addresses are present, both conditions will be applied.
-          // PostgREST applies AND; to emulate (ids OR addresses) you’d make two
-          // queries or use a server-side RPC. If you only pass one type, this is fine.
-          query = query.in('destinations.address', addrs);
+          // Split IPs vs hostnames; use equality for IPs (INET) and ilike for hostnames
+          const ips = addrs.filter(a => a.includes(':') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(a));
+          const hosts = addrs.filter(a => !ips.includes(a));
+          if (ips.length) query = query.in('destinations.address', ips);
+          if (hosts.length) {
+            // For multiple hostnames with ilike, fall back to OR logic by running multiple filters
+            // Supabase JS doesn’t support OR across the same column easily here; simplest is a separate RPC for complex OR.
+            // Apply a single ilike when there’s one hostname; otherwise skip to avoid 42883.
+            if (hosts.length === 1) {
+              query = query.ilike('destinations.address', `%${hosts[0]}%`);
+            }
+          }
         }
       }
 
@@ -805,7 +860,7 @@ class TracerouteController {
     const sampleRun = row.sample_run_ids?.[0];
     let path = [];
     let runTimestamp = null;
-    if (sampleRun) {
+  if (sampleRun) {
       const { data: hopsData, error: hopsErr } = await supabase
         .from('hops')
   .select('hop_number, ip, hostname, rtt1, rtt2, rtt3, asn')
@@ -843,7 +898,9 @@ class TracerouteController {
       percent,
       avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
       timeStamp: runTimestamp || new Date().toISOString(),
-      protocol: row.protocol
+  protocol: row.protocol,
+  // Surface the representative run id so the frontend can retrieve raw output if needed
+  run_id: sampleRun || null
     };
   }
 

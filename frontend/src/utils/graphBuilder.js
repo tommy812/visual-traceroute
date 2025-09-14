@@ -46,8 +46,15 @@ export function buildGraph({
   // Stable id map - include aggregation mode/scope in mapping to ensure complete separation
   const nodeIdMap = new Map();
   let nextId = 1;
+  // Canonicalize keys for ID mapping (e.g., unify ASN across steps in Shared IPs)
+  const canonicalizeKeyForId = (key) => {
+    if (aggregationMode === 'shared-ips' && key.startsWith('asn:')) {
+      return key.replace(/@h:\d+/, '@h:0');
+    }
+    return key;
+  };
   const getOrCreateNodeId = (key) => {
-    const fullKey = `${aggregationMode}:${aggregationScope}:${key}`;
+    const fullKey = `${aggregationMode}:${aggregationScope}:${canonicalizeKeyForId(key)}`;
     if (nodeIdMap.has(fullKey)) return nodeIdMap.get(fullKey);
     const id = nextId++;
     nodeIdMap.set(fullKey, id);
@@ -72,6 +79,7 @@ export function buildGraph({
 
   // ===== IPv6-only helpers =====
   const isIPv6 = (s) => typeof s === 'string' && s.includes(':');
+  // In Shared IPs, we visually merge ASN nodes across steps (handled below)
   const normalizeIp = (s) => (isIPv6(s) ? s : null);
 
   // (rely on the top-level HIERARCHY_MASKS_V6)
@@ -134,7 +142,6 @@ export function buildGraph({
 
   // Pre-compute collapsed step per hop for ASN aggregation:
       // - consecutive hops with the same ASN collapse into one step
-      // - hops without ASN each take their own step
       // - timeouts/non-IPv6 also take their own step
       const asnStepByIdx = [];
   const asnEnabled = (aggregationMode === 'asn' || networkHierarchy === 'asn');
@@ -191,7 +198,7 @@ export function buildGraph({
         Object.defineProperty(pathObj, '_cachedPathId', { value: pathId, enumerable: false, configurable: true });
       }
 
-      pathDescriptors.push({ destination, destColor, pathId, hops });
+  pathDescriptors.push({ destination, destColor, pathId, hops, runId: pathObj?.run_id ?? null });
   // (max hop no longer tracked)
 
   // Determine expected destination IP (from data or destination key if it's an IP)
@@ -259,7 +266,7 @@ export function buildGraph({
       }
 
       // Collect details keyed by the final rendering key
-      hops.forEach((hop, idx) => {
+  hops.forEach((hop, idx) => {
         const hopNumber = hop?.hop_number ?? (idx + 1);
         let key;
         const aggregateTimeouts = (aggregationMode !== 'none') || (networkHierarchy !== 'none');
@@ -315,11 +322,11 @@ export function buildGraph({
               const asnGroup = `AS${asnVal}`;
               const collapsed = !expandedAsnGroups?.has(asnGroup);
               if (collapsed) {
-                const base = (aggregationScope === 'cross-destination')
-                  ? `asn:${asnGroup}@h:${step}`
-                  : `asn:${asnGroup}@d:${destination}@h:${step}`;
-                // In Show All Paths, keep ASN groups per-run (do not mix runs)
-                key = (aggregationMode === 'none') ? `${base}@p:${pathId}` : base;
+                  // Use the collapsed step in the key; ID mapping will dedupe in Shared IPs
+                  const base = (aggregationScope === 'cross-destination')
+                    ? `asn:${asnGroup}@h:${step}`
+                    : `asn:${asnGroup}@d:${destination}@h:${step}`;
+                  key = (aggregationMode === 'none') ? `${base}@p:${pathId}` : base;
               } else {
                 // Expanded ASN group shows underlying IP nodes; keep per-run identity in Show All Paths
                 const base = (aggregationScope === 'cross-destination')
@@ -390,7 +397,10 @@ export function buildGraph({
           pathAvgRtt: pathObj?.avg_rtt ?? null,
           pathCount: pathObj?.count ?? null,
           totalTraces: destData?.total_traces ?? null,
-          pathId
+          pathId,
+          // NEW: attach run id and destination address so drawer can fetch exact trace
+          trace_run_id: pathObj?.run_id ?? null,
+          destinationAddress: destData?.destination || destination || null
         });
       });
     };
@@ -414,6 +424,95 @@ export function buildGraph({
       dataTransformer,
       networkHierarchy
     });
+  }
+
+  // Determine ASN roles (first/last) per path to influence placement in Shared IPs
+  const asnRoles = new Map(); // canonicalKey -> { minStep, maxStep, firstSeen: bool, lastSeen: bool }
+  const asnPlacementEnabled = (aggregationMode === 'shared-ips') && (networkHierarchy === 'asn' || aggregationMode === 'asn');
+  if (asnPlacementEnabled) {
+    const buildAsnKey = (asnGroup, step, destination) =>
+      (aggregationScope === 'cross-destination')
+        ? `asn:${asnGroup}@h:${step}`
+        : `asn:${asnGroup}@d:${destination}@h:${step}`;
+
+    for (const { destination, hops } of pathDescriptors) {
+      // Recompute collapsed ASN steps for this path
+      let step = 0;
+      let prevType = null;
+      let prevAsn = null;
+      const seq = []; // [{ asnGroup, step }]
+      for (let i = 0; i < hops.length; i++) {
+        const h = hops[i];
+        const ip = h?.ip;
+        const timeoutish = !h || h.is_timeout || !ip || !isIPv6(ip);
+        if (timeoutish) { step += 1; prevType = 'timeout'; prevAsn = null; continue; }
+        const hasAsn = (typeof h?.asn === 'number' || (typeof h?.asn === 'string' && String(h.asn).trim() !== ''));
+        if (hasAsn) {
+          const a = `AS${String(h.asn).trim()}`;
+          if (prevType === 'asn' && prevAsn === a) {
+            // same step, skip
+          } else {
+            step += 1; prevType = 'asn'; prevAsn = a;
+            seq.push({ asnGroup: a, step });
+          }
+        } else { step += 1; prevType = 'ip'; prevAsn = null; }
+      }
+      if (seq.length) {
+        const first = seq[0];
+        const last = seq[seq.length - 1];
+        const firstKey = canonicalizeKeyForId(buildAsnKey(first.asnGroup, first.step, destination));
+        const lastKey  = canonicalizeKeyForId(buildAsnKey(last.asnGroup,  last.step,  destination));
+        const upd = (canonKey, stp, role) => {
+          const cur = asnRoles.get(canonKey) || { minStep: Infinity, maxStep: -Infinity, firstSeen: false, lastSeen: false };
+          cur.minStep = Math.min(cur.minStep, stp);
+          cur.maxStep = Math.max(cur.maxStep, stp);
+          if (role === 'first') cur.firstSeen = true;
+          if (role === 'last') cur.lastSeen = true;
+          asnRoles.set(canonKey, cur);
+        };
+        upd(firstKey, first.step, 'first');
+        upd(lastKey,  last.step,  'last');
+      }
+    }
+  }
+
+  // Special merge: In Shared IPs with ASN hierarchy, unify ASN nodes across
+  // occurrences and place the node at the last (max) collapsed step so timeouts
+  // and later hops appear after it.
+  if (aggregationMode === 'shared-ips' && (networkHierarchy === 'asn' || aggregationMode === 'asn')) {
+    const merged = new Map(); // canonicalKey -> { maxStep, lists[] } or passthrough array
+    for (const [key, list] of finalDetailsByKey) {
+      if (!key.startsWith('asn:')) {
+        // passthrough (can collect if duplicates exist)
+        if (!merged.has(key)) merged.set(key, list);
+        else if (Array.isArray(merged.get(key))) merged.set(key, merged.get(key).concat(list));
+        continue;
+      }
+      const canonical = canonicalizeKeyForId(key); // asn:*@h:0 (keeps @d if present)
+      const m = key.match(/@h:(\d+)/);
+      const step = m ? parseInt(m[1], 10) : 0;
+      if (!merged.has(canonical)) merged.set(canonical, { maxStep: step, lists: [list] });
+      else {
+        const entry = merged.get(canonical);
+        entry.maxStep = Math.max(entry.maxStep, step);
+        entry.lists.push(list);
+      }
+    }
+
+  // Rebuild details map choosing step: prefer last's maxStep, else first's minStep
+    const rebuilt = new Map();
+    for (const [k, v] of merged) {
+      if (k.startsWith('asn:')) {
+        const entry = v;
+    const role = asnRoles.get(k) || { minStep: entry.maxStep, maxStep: entry.maxStep, firstSeen: false, lastSeen: false };
+    const chosenStep = role.lastSeen ? role.maxStep : role.firstSeen ? role.minStep : entry.maxStep;
+    const repKey = k.replace(/@h:0/, `@h:${chosenStep}`);
+        rebuilt.set(repKey, entry.lists.flat());
+      } else {
+        rebuilt.set(k, Array.isArray(v) ? v : (v?.lists ? v.lists.flat() : []));
+      }
+    }
+    finalDetailsByKey = rebuilt;
   }
 
   // Pass 2: create all nodes (so edges never point to ghosts)
@@ -492,10 +591,11 @@ export function buildGraph({
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
+        const hostLine = (display && display !== value) ? `Host: ${display}\n` : '';
         return {
           id,
           label: display,
-          title: `IP: ${value}\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
+          title: `${hostLine}IP: ${value}\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
           color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
           font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
           shape: isTerminal ? 'box' : 'dot',
@@ -522,10 +622,11 @@ export function buildGraph({
         if (!isAggregatedPrefix) {
           // Treat as a normal hop using the standard green styling
           const isTerminal = list.some(d => d.destinationReached);
+          const hostLine2 = (fallbackLabel && fallbackLabel !== (firstDetail?.ip || null)) ? `Host: ${fallbackLabel}\n` : '';
           return {
             id,
             label: fallbackLabel,
-            title: `IP: ${fallbackLabel}\n(Hierarchy mask produced no aggregation)\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
+            title: `${hostLine2}IP: ${firstDetail?.ip || fallbackLabel}\n(Hierarchy mask produced no aggregation)\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
             color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
             font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
             shape: isTerminal ? 'box' : 'dot',
@@ -538,12 +639,15 @@ export function buildGraph({
             fixed: { x: false, y: false }
           };
         }
+        // Determine if this aggregated group includes the destination (any path reached dest in this group)
+        const containsDestination = list.some(d => d.destinationReached && !d.is_timeout);
         // Aggregated prefix: render as a chip with count and chevron (expand affordance)
         return {
           id,
           label: `${value} (${uniqueIps.size}) ▸`,
-          title: `Network Prefix: ${value}\nAggregated ${uniqueIps.size} IPs\nHop #${hopNumber} • ${dest}\nClick to expand ▸`,
-          color: { background: '#FF9800', border: '#F57C00' },
+          // Remove default vis tooltip; use custom overlay instead
+          title: undefined,
+          color: { background: '#FF9800', border: containsDestination ? '#0c7237ff' : '#D32F2F' },
           font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff', vadjust: 0 },
           shape: 'box',
           shapeProperties: { borderRadius: 10 },
@@ -561,14 +665,20 @@ export function buildGraph({
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
+          // Use the collapsed step from the key (hopNumber parsed above) so
+          // ordering aligns with ASN aggregation steps and timeout placement.
+          // Original hop indices are still preserved in `list` for the drawer.
+          const collapsedStep = Number.isFinite(hopNumber) ? hopNumber : 0;
         const uniqueIps = new Set(list.filter(d => d.ip && !d.is_timeout).map(d => d.ip));
         const count = uniqueIps.size || 1;
         const label = `${value} (${count}) ▸`;
-        return {
+        const containsDestination = list.some(d => d.destinationReached && !d.is_timeout);
+    return {
           id,
           label: `🏢 ${label}`,
-          title: `ASN: ${value}\nAggregated ${count} IP${count === 1 ? '' : 's'}\nHop #${hopNumber} • ${dest}\nClick to expand ▸`,
-          color: { background: '#9C27B0', border: '#7B1FA2' },
+      // Remove default vis tooltip; use custom overlay instead
+      title: undefined,
+          color: { background: '#9C27B0', border: containsDestination ? '#0c7237ff' : '#D32F2F' },
           font: { size: 11, color: '#fff', strokeWidth: 2, strokeColor: '#333', vadjust: 0 },
           shape: 'box',
           shapeProperties: { borderRadius: 10 },
@@ -576,7 +686,7 @@ export function buildGraph({
           size: 22,
           nodeType: 'asn',
           asnGroup: value,
-          level: hopNumber,
+            level: collapsedStep,
           
           physics: false,
           fixed: { x: false, y: false }
@@ -715,6 +825,7 @@ export function buildGraph({
           const asnGroup = `AS${asnVal}`;
           const collapsed = !expandedAsnGroups?.has(asnGroup);
           if (collapsed) {
+            // Keep step in key; ID mapping dedupes for Shared IPs
             const base = (aggregationScope === 'cross-destination')
               ? `asn:${asnGroup}@h:${step}`
               : `asn:${asnGroup}@d:${destination}@h:${step}`;

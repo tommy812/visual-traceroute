@@ -12,7 +12,7 @@ export const useFilters = () => {
   const [showUnreachedOnly, setShowUnreachedOnly] = useState(false);
   const [selectedProtocols, setSelectedProtocols] = useState([]);
   const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
-  const [hideTimeouts, setHideTimeouts] = useState(false); // NEW
+  const [hideReachedOnly, setHideReachedOnly] = useState(false); // NEW
 
 
   // Memoize the reset function to prevent unnecessary re-renders
@@ -24,7 +24,7 @@ export const useFilters = () => {
     setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
     setSelectedProtocols([]);
     setShowPrimaryOnly(false);
-    setHideTimeouts(false);
+    setHideReachedOnly(false);
   setShowReachedOnly(false);
   setShowUnreachedOnly(false);
   }, []);
@@ -38,7 +38,7 @@ export const useFilters = () => {
     selectedPathTypes,
     selectedProtocols,
     showPrimaryOnly,
-  hideTimeouts,
+  hideReachedOnly,
   showReachedOnly,
   showUnreachedOnly
   }), [
@@ -49,7 +49,7 @@ export const useFilters = () => {
     selectedPathTypes,
     selectedProtocols,
     showPrimaryOnly,
-  hideTimeouts,
+  hideReachedOnly,
   showReachedOnly,
   showUnreachedOnly
   ]);
@@ -63,7 +63,7 @@ export const useFilters = () => {
     setSelectedPathTypes,
     setSelectedProtocols,
     setShowPrimaryOnly,
-    setHideTimeouts,
+    setHideReachedOnly,
     resetFilters
   }), [resetFilters]);
 

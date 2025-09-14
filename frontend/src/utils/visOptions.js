@@ -2,7 +2,7 @@ export function buildVisOptions(layoutOptimization, graph) {
   const baseOptions = {
     nodes: {
       shape: 'dot',
-      size: 16,
+      size: 10,
       borderWidth: 2,
       color: { border: '#2196F3', background: '#BBDEFB' },
       font: { color: '#333', size: 12 }
@@ -57,6 +57,25 @@ export function buildVisOptions(layoutOptimization, graph) {
           }
         },
         edges: { ...baseOptions.edges, smooth: true, chosen: false }
+      };
+    case 'asn-compact':
+      // Special compact layout for ASN-deduped views (Shared IPs + ASN)
+      return {
+        ...baseOptions,
+        layout: {
+          hierarchical: {
+            enabled: true,
+            direction: 'LR',
+            sortMethod: 'directed',
+            shakeTowards: 'roots',
+            nodeSpacing: 70,
+            treeSpacing: 20,
+            levelSeparation: 140,
+            blockShifting: true,
+            edgeMinimization: true,
+            parentCentralization: true
+          }
+        }
       };
     default:
       return baseOptions;

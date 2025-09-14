@@ -76,6 +76,13 @@ class ApiService {
     return this.makeRequest(`/runs/${id}`);
   }
 
+  // Get latest trace run by destination address (IPv4/IPv6 safe)
+  async getLatestRunByDestination(address) {
+    const params = new URLSearchParams();
+    params.set('destination', address);
+    return this.makeRequest(`/runs/latest-by-destination?${params.toString()}`);
+  }
+
   // Get network data for visualization
   async getNetworkData(filters = {}) {
     const params = new URLSearchParams();

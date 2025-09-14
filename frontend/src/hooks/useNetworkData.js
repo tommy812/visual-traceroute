@@ -1,11 +1,14 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dataRepository from '../services/dataRepository';
 
-export const useNetworkData = (selectedDestinations, dateRange, selectedProtocols) => {
+// dataMode: 'auto' | 'aggregated' | 'per-run'
+export const useNetworkData = (selectedDestinations, dateRange, selectedProtocols, dataMode = 'auto') => {
   const [pathData, setPathData] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lastFetchParams, setLastFetchParams] = useState(null);
+  // Guard against race conditions: only latest request may update state
+  const requestIdRef = useRef(0);
 
   // Memoize the fetch parameters to prevent unnecessary API calls
   const fetchParams = useMemo(() => {
@@ -49,40 +52,73 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
      const loadNetworkData = useCallback(async () => {
     if (!shouldFetch) return;
 
+    const reqId = ++requestIdRef.current;
     try {
       // Always show loading spinner at the start
       setLoading(true);
       setError(null);
 
-      // 1) Cache-first (populate UI quickly but keep loading until fresh data arrives)
-  const cached = dataRepository.getCachedNetworkData(fetchParams, { selectedProtocols: fetchParams.selectedProtocols });
-      const hadCached = cached && Object.keys(cached).length > 0;
-      if (hadCached) {
-        setPathData(cached);
+      // Decide mode
+      const destCount = Array.isArray(fetchParams.destinations) ? fetchParams.destinations.length : 0;
+      const startMs = fetchParams.start_date ? new Date(fetchParams.start_date).getTime() : 0;
+      const endMs = fetchParams.end_date ? new Date(fetchParams.end_date).getTime() : 0;
+      const days = startMs && endMs ? Math.max(0, (endMs - startMs) / (24 * 60 * 60 * 1000)) : 0;
+      const resolvedMode = dataMode === 'auto'
+        ? (destCount > 20 || days > 14 ? 'aggregated' : 'per-run')
+        : dataMode;
+
+      // 1) Cache-first according to mode
+      let hadCached = false;
+      if (resolvedMode === 'per-run') {
+        const cachedPerRun = dataRepository.getCachedNetworkData(fetchParams, {
+          selectedProtocols: fetchParams.selectedProtocols,
+          transformMode: 'per-run'
+        });
+        hadCached = cachedPerRun && Object.keys(cachedPerRun).length > 0;
+        if (hadCached && reqId === requestIdRef.current) setPathData(cachedPerRun);
+      } else {
+        const cachedAgg = dataRepository.getCachedNetworkData(fetchParams, { selectedProtocols: fetchParams.selectedProtocols });
+        hadCached = cachedAgg && Object.keys(cachedAgg).length > 0;
+        if (hadCached && reqId === requestIdRef.current) setPathData(cachedAgg);
       }
 
-      // 2) Background refresh (aggregated API) — but skip if cache coverage is sufficient
-      let needFresh = true;
-      if (hadCached) {
-        const within30 = dataRepository.isRangeWithinLast30Days(fetchParams);
-        const covered = dataRepository.hasCoverageLast30Days(fetchParams.destinations);
-        if (within30 && covered) needFresh = false;
+      // 2) Fetch fresh for selected mode
+      if (resolvedMode === 'per-run') {
+        const freshPerRun = await dataRepository.fetchAndCacheNetworkData(
+          fetchParams,
+          { selectedProtocols: fetchParams.selectedProtocols, transformMode: 'per-run' }
+        );
+        if (reqId === requestIdRef.current) setPathData(freshPerRun);
+      } else {
+        // aggregated
+        let needFresh = true;
+        if (hadCached) {
+          const within30 = dataRepository.isRangeWithinLast30Days(fetchParams);
+          const covered = dataRepository.hasCoverageLast30Days(fetchParams.destinations);
+          if (within30 && covered) needFresh = false;
+        }
+        if (needFresh) {
+          const freshAgg = await dataRepository.fetchAndCacheAggregated(fetchParams);
+          if (reqId === requestIdRef.current) setPathData(freshAgg);
+        }
       }
-      if (needFresh) {
-        const fresh = await dataRepository.fetchAndCacheAggregated(fetchParams);
-        setPathData(fresh);
-      }
-      setLastFetchParams(fetchParams);
 
-      // 3) Keep last-30-days warm
-  const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
-  dataRepository.prefetchLast30Days(destinationStrings);
+      if (reqId === requestIdRef.current) setLastFetchParams(fetchParams);
+
+      // 3) Keep last-30-days warm (only useful for per-run and within last 30 days)
+      const destinationStrings = Array.isArray(fetchParams.destinations) ? fetchParams.destinations : [];
+      const within30 = dataRepository.isRangeWithinLast30Days(fetchParams);
+      const covered = dataRepository.hasCoverageLast30Days(destinationStrings);
+      if (resolvedMode === 'per-run' && within30 && !covered) {
+        dataRepository.prefetchLast30Days(destinationStrings);
+      }
     } catch (err) {
-      setError(err.message || 'Failed to load network data');
+      // Only surface error if still the latest request
+      if (reqId === requestIdRef.current) setError(err.message || 'Failed to load network data');
     } finally {
-      setLoading(false);
+      if (reqId === requestIdRef.current) setLoading(false);
     }
-  }, [fetchParams, shouldFetch]);
+  }, [fetchParams, shouldFetch, dataMode]);
 
   // Auto-fetch when parameters change
   useEffect(() => {

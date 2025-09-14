@@ -201,7 +201,11 @@ class DataTransformer {
       percent: 0,
       avg_rtt: avgRtt,
       timeStamp: traceRun.timestamp || new Date().toISOString(),
-      protocol: pathProtocol
+  protocol: pathProtocol,
+  // Preserve the exact source run id so the drawer can fetch its raw output
+  run_id: traceRun?.id ?? null,
+  // Also keep destination address for reference (if joined)
+  destination_address: traceRun?.destinations?.address || null
     };
   }
 

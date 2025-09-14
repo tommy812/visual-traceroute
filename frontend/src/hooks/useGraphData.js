@@ -8,7 +8,7 @@ export const useGraphData = (pathData, filters) => {
     selectedPathTypes,
     showPrimaryOnly,
     selectedProtocols,
-  hideTimeouts,
+  hideReachedOnly,
   showReachedOnly
   } = filters;
 
@@ -81,7 +81,7 @@ export const useGraphData = (pathData, filters) => {
 
       // 2) Apply user filters (timeouts, protocol, RTT, usage)
       let filteredCandidates = candidates.filter(p => {
-        if (hideTimeouts && endsWithTimeout(p)) return false;
+        if (hideReachedOnly && isSuccessful(p)) return false;
   if (showReachedOnly && !isSuccessful(p)) return false;
         if (!matchesProtocol(p)) return false;
         if (numericMinRTT !== null && typeof p.avg_rtt === 'number' && p.avg_rtt < numericMinRTT) return false;
@@ -215,7 +215,7 @@ export const useGraphData = (pathData, filters) => {
     });
 
     return result;
-  }, [pathData, minRTT, maxRTT, minUsagePercent, selectedPathTypes, showPrimaryOnly, selectedProtocols, hideTimeouts, showReachedOnly]);
+  }, [pathData, minRTT, maxRTT, minUsagePercent, selectedPathTypes, showPrimaryOnly, selectedProtocols, hideReachedOnly, showReachedOnly]);
 
   return { filteredData };
 };

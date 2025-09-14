@@ -21,8 +21,8 @@ const AdvancedFilters = ({
   setShowReachedOnly,
   showUnreachedOnly, 
   setShowUnreachedOnly,
-  hideTimeouts,          
-  setHideTimeouts  
+  hideReachedOnly,          
+  setHideReachedOnly  
 
 }) => {
   return (
@@ -144,11 +144,11 @@ const AdvancedFilters = ({
         <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" }}>
           <input
             type="checkbox"
-            checked={hideTimeouts}
-            onChange={(e) => setHideTimeouts(e.target.checked)}
+            checked={hideReachedOnly}
+            onChange={(e) => setHideReachedOnly(e.target.checked)}
             style={{ margin: 0, transform: "scale(0.8)" }}
           />
-          <span style={{ fontSize: "11px" }}>Hide Timed-out Paths</span>
+          <span style={{ fontSize: "11px" }}>Hide Successful Paths</span>
         </label>
         <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", marginTop: "6px" }}>
           <input

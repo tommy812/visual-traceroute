@@ -12,6 +12,8 @@ router.get('/methods', tracerouteController.getMethods);
 
 // Trace runs
 router.get('/runs', tracerouteController.getTraceRuns);
+// Place literal path before param route to avoid ':id' catching it
+router.get('/runs/latest-by-destination', (req, res) => tracerouteController.getLatestRunByDestination(req, res));
 router.get('/runs/:id', tracerouteController.getTraceRunById);
 
 // Hops

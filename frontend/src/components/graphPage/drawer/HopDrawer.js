@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ipGeoService from '../../../services/ipGeoService';
 import peeringDbService from '../../../services/peeringDbService';
 import PeeringDbPanel from './PeeringDbPanel';
+import FullTraceroutePanel from './FullTraceroutePanel';
 
 // Optimized HopDrawer component with React.memo
 const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null }) => {
@@ -9,6 +10,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
   const [destFilter, setDestFilter] = useState('ALL');
   const [sortBy, setSortBy] = useState('USAGE_DESC');
   const [showPerRun, setShowPerRun] = useState(false);
+  // Track which path's full traceroute is expanded (only one at a time)
+  const [expandedFullTrKey, setExpandedFullTrKey] = useState(null);
 
   // PeeringDB state
   const [pdbLoading, setPdbLoading] = useState(false);
@@ -126,6 +129,23 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     }
   }, [onHighlightPath]);
 
+  // Listen to traceroute hover events to relay highlight to graph
+  useEffect(() => {
+    const onHover = (e) => {
+      // When hovering a hop in the table, we just keep drawer open; graph highlight is handled via global listener
+    };
+    const onLeave = () => {
+      // Broadcast clear highlight
+      window.dispatchEvent(new CustomEvent('graph:clearHighlight'));
+    };
+    window.addEventListener('traceroute:hover-hop', onHover);
+    window.addEventListener('traceroute:leave', onLeave);
+    return () => {
+      window.removeEventListener('traceroute:hover-hop', onHover);
+      window.removeEventListener('traceroute:leave', onLeave);
+    };
+  }, []);
+
 
 
   // Fetch IP geolocation data with optimized loading states
@@ -155,6 +175,20 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
   const sharedIpForGeo = processedHopData?.sharedIP;
   const existingGeoForGeo = processedHopData?.ipGeoData || null;
   const currentGeoData = existingGeoForGeo || ipGeoData[sharedIpForGeo];
+
+  // Reset expanded full traceroute section when drawer closes
+  useEffect(() => {
+    if (!isOpen) {
+      setExpandedFullTrKey(null);
+    }
+  }, [isOpen]);
+
+  // Helper to build a stable key for per-item expansion
+  const makeHopKey = useCallback((h) => {
+    return String(
+      h?.trace_run_id || h?.run_id || h?.traceRunId || h?.pathId || `${h?.destination}-${h?.pathType}-${h?.hopNumber ?? ''}`
+    );
+  }, []);
 
   // Detect "Max TTL reached" for timeout selections
   const MAX_TTL = 30;
@@ -219,6 +253,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
   }
 
   const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+
 
   return (
     <div
@@ -818,6 +853,33 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                   <strong>🏠 Hostname in this path:</strong> {hop.hostname}
                 </div>
               )}
+
+              {/* Full Traceroute (raw) collapsible, per-hop destination */}
+              <div style={{ marginTop: '10px' }}>
+                <button
+                  onClick={() => {
+                    const key = makeHopKey(hop);
+                    setExpandedFullTrKey(prev => (prev === key ? null : key));
+                  }}
+                  style={{
+                    background: '#2d3436', color: 'white', border: 'none', borderRadius: 4,
+                    padding: '6px 10px', fontSize: 12, cursor: 'pointer'
+                  }}
+                >
+                  {expandedFullTrKey === makeHopKey(hop) ? 'Hide' : 'Show'} full traceroute
+                </button>
+                {expandedFullTrKey === makeHopKey(hop) && (
+                  <div style={{ marginTop: 8 }}>
+                    <FullTraceroutePanel
+                      // Use the exact source run id when available to guarantee the shown traceroute matches this hop
+                      traceRunId={hop.trace_run_id || hop.run_id || hop.traceRunId || hop.extra?.trace_run_id || null}
+                      destinationAddress={hop.destinationAddress || hop.destination}
+                      title={`Complete Traceroute: ${hop.destination}`}
+                      compact
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           ))}
         </div>

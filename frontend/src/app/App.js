@@ -103,7 +103,14 @@ const ChartsApp = React.memo(({onGoLanding}) => {
   } = useDestinations();
 
 
-  const { pathData, loading, error } = useNetworkData(selectedDestinationAddresses, dateRange, filters.selectedProtocols);
+  // Data mode: keep 'auto' (hook decides per-run vs aggregated by range/destination size)
+  const dataMode = 'auto';
+  const { pathData, loading, error } = useNetworkData(
+    selectedDestinationAddresses,
+    dateRange,
+    filters.selectedProtocols,
+    dataMode
+  );
   const { selectedHop, isDrawerOpen, handleHopSelect, closeDrawer } = useHopDrawer();
   const apiHealthy = !error;
 
@@ -219,8 +226,8 @@ const ChartsApp = React.memo(({onGoLanding}) => {
         setMinUsagePercent={filters.setMinUsagePercent}
         showPrimaryOnly={filters.showPrimaryOnly}
         setShowPrimaryOnly={filters.setShowPrimaryOnly}
-        hideTimeouts={filters.hideTimeouts}                 
-        setHideTimeouts={filters.setHideTimeouts}  
+        hideReachedOnly={filters.hideReachedOnly}                 
+        setHideReachedOnly={filters.setHideReachedOnly}  
   showReachedOnly={filters.showReachedOnly}
   setShowReachedOnly={filters.setShowReachedOnly}
         onResetFilters={handleResetFilters}
@@ -246,7 +253,7 @@ const ChartsApp = React.memo(({onGoLanding}) => {
               minUsagePercent={filters.minUsagePercent}
               selectedPathTypes={filters.selectedPathTypes}
               selectedProtocols={filters.selectedProtocols}
-              hideTimeouts={filters.hideTimeouts}
+              hideReachedOnly={filters.hideReachedOnly}
               showReachedOnly={filters.showReachedOnly}
             />
             <div style={{

@@ -31,6 +31,8 @@ const GraphControls = ({
   onClearHighlight
   , onCollapseAllPrefixes
   , onCollapsePrefix
+  , disableShowAllPaths = false
+  , disableReason = ''
 }) => {
   return (
     <>
@@ -216,19 +218,24 @@ const GraphControls = ({
             Path Aggregation:
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginLeft: '8px' }}>
-            {['none', 'shared-ips'].map(mode => (
-              <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="aggregationMode"
-                  value={mode}
-                  checked={aggregationMode === mode}
-                  onChange={(e) => onAggregationModeChange(e.target.value)}
-                  style={{ margin: 0, cursor: 'pointer' }}
-                />
-                {mode === 'none' ? '📊 Show All Paths' : '🔗 Shared IPs'}
-              </label>
-            ))}
+            {['none', 'shared-ips'].map(mode => {
+              const isNone = mode === 'none';
+              const disabled = isNone && disableShowAllPaths;
+              return (
+                <label key={mode} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: isFullscreen ? '11px' : '10px', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.55 : 1 }} title={disabled ? (disableReason || 'Disabled for large selections') : undefined}>
+                  <input
+                    type="radio"
+                    name="aggregationMode"
+                    value={mode}
+                    checked={aggregationMode === mode}
+                    onChange={(e) => !disabled && onAggregationModeChange(e.target.value)}
+                    style={{ margin: 0, cursor: disabled ? 'not-allowed' : 'pointer' }}
+                    disabled={disabled}
+                  />
+                  {isNone ? '📊 Show All Paths' : '🔗 Shared IPs'}
+                </label>
+              );
+            })}
           </div>
           
           {/* Network Hierarchy */}

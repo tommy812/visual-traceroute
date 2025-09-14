@@ -2,10 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Graph from 'react-graph-vis';
 import ipGeoService from '../../../services/ipGeoService';
 import GraphControls from './GraphControls';
+import AggregatedHopTooltip from './AggregatedHopTooltip';
 
 
 import { useNetworkGraphModel, useGraphData, usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
-import dataRepository from '../../../services/dataRepository';
 import ErrorBoundary from '../../ui/ErrorBoundary';
 import { buildVisOptions } from '../../../utils/visOptions';
 
@@ -27,7 +27,7 @@ const NetworkGraph = React.memo(({
   minUsagePercent = '',
   selectedPathTypes = ['PRIMARY', 'ALTERNATIVE'],
   selectedProtocols = [],
-  hideTimeouts = false,
+  hideReachedOnly = false,
   showReachedOnly = false
 }) => {
   // Store network instance for zoom controls
@@ -48,66 +48,15 @@ const NetworkGraph = React.memo(({
   const { isFullscreen, dimensions, toggleFullscreen, containerStyle } = useGraphFullscreen();
   const networkRef = useRef(null);
   const [layoutOptimization, setLayoutOptimization] = useState('minimal-crossings');
+  const [hoverState, setHoverState] = useState({ visible: false, x: 0, y: 0, items: [] });
+  const [pinnedTooltip, setPinnedTooltip] = useState({ active: false, nodeId: null, x: 0, y: 0, items: [] });
 
  
 
-  // Cache-first: try to build path data from in-memory cache for current range
-  const [cachedPathData, setCachedPathData] = useState(null);
-  const [freshPathData, setFreshPathData] = useState(null);
-
-  useEffect(() => {
-    let cancelled = false;
-  (async () => {
-      try {
-        // Warm cache for last 30 days in background
-        const destStrings = (Array.isArray(selectedDestinations) ? selectedDestinations : []).map(d =>
-          typeof d === 'string' ? d : (d?.address || (d?.id != null ? String(d.id) : null))
-        ).filter(Boolean);
-        dataRepository.prefetchLast30Days(destStrings);
-
-  const params = {
-          destinations: destStrings,
-          start_date: dateRange?.start?.toISOString?.(),
-          end_date: dateRange?.end?.toISOString?.()
-        };
-  const usePerRun = aggregationMode === 'none' || aggregationMode === 'shared-ips' || aggregationMode === 'asn' || networkHierarchy === 'asn';
-        const cached = dataRepository.getCachedNetworkData(params, {
-          // Ensure cache respects current protocol selection
-          selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],
-          // If current view needs ASN, require cached runs to include hop.asn
-    requireASN: aggregationMode === 'asn' || networkHierarchy === 'asn',
-          // In Show All Paths and Shared IPs, use per-run transformation
-          transformMode: usePerRun ? 'per-run' : undefined
-        });
-        if (!cancelled) setCachedPathData(cached || null);
-
-  // For Show All Paths, Shared IPs, and ASN (via aggregation or hierarchy), prefer fresh per-run data over aggregated prop
-        if (usePerRun) {
-          const fresh = await dataRepository.fetchAndCacheNetworkData(params, {
-            selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],
-            transformMode: 'per-run'
-          });
-          if (!cancelled) setFreshPathData(fresh || null);
-        } else {
-          if (!cancelled) setFreshPathData(null);
-        }
-      } catch {
-        if (!cancelled) { setCachedPathData(null); setFreshPathData(null); }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [selectedDestinations, dateRange?.start, dateRange?.end, selectedProtocols, aggregationMode, networkHierarchy]);
-
-  // Prefer server-provided prop data when available; fall back to cache when prop is empty
+  // With single-source fetching, the graph uses the data from parent directly
   const effectivePathData = useMemo(() => {
-  // In Show All Paths, Shared IPs, and ASN (including when selected under Network Hierarchy): prefer fresh per-run, then cached per-run; ignore aggregated prop
-  if (aggregationMode === 'none' || aggregationMode === 'shared-ips' || aggregationMode === 'asn' || networkHierarchy === 'asn') {
-      return freshPathData || cachedPathData || null;
-    }
-    // Aggregated modes: use provided aggregated data or cache fallback
-    const hasProp = pathData && typeof pathData === 'object' && Object.keys(pathData).length > 0;
-    return hasProp ? pathData : (cachedPathData || pathData || null);
-  }, [aggregationMode, networkHierarchy, pathData, cachedPathData, freshPathData]);
+    return pathData && typeof pathData === 'object' ? pathData : null;
+  }, [pathData]);
 
   // Normalize selected destinations to match keys in effectivePathData (prefer destination address over id)
   const normalizedDestinations = useMemo(() => {
@@ -152,7 +101,7 @@ const NetworkGraph = React.memo(({
     selectedPathTypes,
     showPrimaryOnly,
     selectedProtocols,
-  hideTimeouts,
+  hideReachedOnly,
   showReachedOnly
   });
 
@@ -277,7 +226,7 @@ const NetworkGraph = React.memo(({
       (selectedProtocols && selectedProtocols.length
         ? selectedProtocols.slice().sort().join(',')
         : 'ALL'),
-  hideTimeouts.toString(),
+  hideReachedOnly.toString(),
   showReachedOnly.toString(),
       // Remove highlightedPaths from key to prevent remounting on selection
       isFullscreen.toString(),
@@ -292,8 +241,23 @@ const NetworkGraph = React.memo(({
       `DATA:${dataSig}`
     ];
     return keyParts.join('|');
-  }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideTimeouts, showReachedOnly, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
+  }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideReachedOnly, showReachedOnly, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
 
+  // Heuristic: consider query heavy when many destinations or a long range
+  const isHeavyQuery = useMemo(() => {
+    const destCount = Array.isArray(normalizedDestinations) ? normalizedDestinations.length : 0;
+    const startMs = dateRange?.start?.getTime?.() ?? 0;
+    const endMs = dateRange?.end?.getTime?.() ?? 0;
+    const days = startMs && endMs ? Math.max(0, (endMs - startMs) / (24 * 60 * 60 * 1000)) : 0;
+    return destCount > 20 || days > 14; // tweak thresholds as needed
+  }, [normalizedDestinations, dateRange?.start, dateRange?.end]);
+
+  // If heavy, auto-avoid 'Show All Paths' (per-run) to reduce payloads
+  useEffect(() => {
+    if (isHeavyQuery && aggregationMode === 'none') {
+      setAggregationMode('shared-ips');
+    }
+  }, [isHeavyQuery, aggregationMode]);
 
 
   const { graph, nodeDetails, pathMapping } = useNetworkGraphModel({
@@ -362,9 +326,12 @@ const NetworkGraph = React.memo(({
 
 
   const options = useMemo(() => {
-    const opts = buildVisOptions(layoutOptimization, graph);
+  // Auto-pick compact ASN layout for Shared IPs + ASN hierarchy/aggregation
+  const useAsnCompact = (aggregationMode === 'shared-ips') && (networkHierarchy === 'asn' || aggregationMode === 'asn');
+  const preset = useAsnCompact ? 'asn-compact' : layoutOptimization;
+  const opts = buildVisOptions(preset, graph);
     // Preserve chosen.node behavior from previous inline config
-    return {
+  return {
       ...opts,
       nodes: {
         ...opts.nodes,
@@ -388,9 +355,14 @@ const NetworkGraph = React.memo(({
             }
           }
         }
+      },
+      interaction: {
+        ...(opts.interaction || {}),
+        hover: true,
+        tooltipDelay: 50
       }
     };
-  }, [layoutOptimization, graph]);
+  }, [layoutOptimization, graph, aggregationMode, networkHierarchy]);
 
   // Enhanced hop selection handler that fetches IP geolocation data
   const handleHopSelection = useCallback(async (nodeData) => {
@@ -484,7 +456,7 @@ const NetworkGraph = React.memo(({
 
   // Memoize events to prevent unnecessary re-renders
   const events = useMemo(() => ({
-    select: function (event) {
+  select: function (event) {
       event.preventDefault?.();
       const { nodes, edges } = event;
       if (nodes.length > 0) {
@@ -494,9 +466,12 @@ const NetworkGraph = React.memo(({
 
         const node = graph.nodes.find(n => n.id === nodeId);
         // Handle expand/collapse nodes
-        if (node?.nodeType === 'prefix') { handlePrefixToggle(node.prefix); return; }
-        if (node?.nodeType === 'timeout_group') { handlePrefixToggle(node.timeoutGroup); return; }
-        if (node?.nodeType === 'asn') { handleAsnToggle(node.asnGroup); return; }
+        // When a network hierarchy is active, disable click-to-expand behavior
+        if (networkHierarchy === 'none') {
+          if (node?.nodeType === 'prefix') { handlePrefixToggle(node.prefix); return; }
+          if (node?.nodeType === 'timeout_group') { handlePrefixToggle(node.timeoutGroup); return; }
+          if (node?.nodeType === 'asn') { handleAsnToggle(node.asnGroup); return; }
+        }
 
         // Try getting precomputed details
         let nodeData = nodeDetails.get(nodeId);
@@ -554,30 +529,162 @@ const NetworkGraph = React.memo(({
         const nodeId = typeof rawId === 'string' ? parseInt(rawId, 10) : rawId;
         const node = graph.nodes.find(n => n.id === nodeId);
         // Collapse parent prefix if double-clicking a child hop
-        if (node?.nodeType === 'hop' && node.parentPrefix && expandedPrefixes.has(node.parentPrefix)) {
+  if (networkHierarchy === 'none' && node?.nodeType === 'hop' && node.parentPrefix && expandedPrefixes.has(node.parentPrefix)) {
           handlePrefixCollapse(node.parentPrefix);
         }
         // Collapse prefix if double-clicking the prefix node itself (if expanded representation kept)
-        if (node?.nodeType === 'prefix' && expandedPrefixes.has(node.prefix)) {
+  if (networkHierarchy === 'none' && node?.nodeType === 'prefix' && expandedPrefixes.has(node.prefix)) {
           handlePrefixCollapse(node.prefix);
         }
       }
     },
     click: function (event) {
       event.preventDefault?.();
-      if (event.nodes.length === 0 && event.edges.length === 0) {
+      if ((event.nodes?.length || 0) === 0 && (event.edges?.length || 0) === 0) {
+        // Background click: clear selection, highlights, and any tooltip
         onHopSelect(null);
         clearHighlight();
+        setHoverState({ visible: false, x: 0, y: 0, items: [] });
+        setPinnedTooltip({ active: false, nodeId: null, x: 0, y: 0, items: [] });
       }
     },
-    hoverNode: function () {},
+    hoverNode: function (event) {
+      try {
+        const { node, pointer } = event || {};
+        if (!node) { if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] }); return; }
+        const id = typeof node === 'string' ? parseInt(node, 10) : node;
+        const nd = graph.nodes.find(n => n.id === id);
+        if (!nd) { if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] }); return; }
+        // Only show for aggregated groups (prefix or asn)
+        if (nd.nodeType === 'prefix' || nd.nodeType === 'asn') {
+          const items = nodeDetails.get(id) || [];
+          // Filter to the current hop level to avoid listing unrelated steps
+          const list = Array.isArray(items) ? items.filter(it => (it?.is_timeout !== true)) : [];
+          if (!pinnedTooltip.active || pinnedTooltip.nodeId !== id) {
+            setHoverState({ visible: list.length > 0, x: pointer?.DOM?.x || 0, y: pointer?.DOM?.y || 0, items: list });
+          }
+        } else {
+          if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] });
+        }
+      } catch {
+        if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] });
+      }
+    },
+    blurNode: function () { if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] }); },
     hoverEdge: function () {}
-  }), [handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode, expandedPrefixes, handlePrefixCollapse]);
+  }), [pinnedTooltip, handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode, expandedPrefixes, handlePrefixCollapse, networkHierarchy]);
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
     networkRef.current = network;
     setNetworkInstance(network);
   }, []);
+
+  // Pin/unpin tooltip on click for aggregated nodes
+  const handlePinFromHover = useCallback(() => {
+    if (!hoverState.visible || !graph) return;
+    // Find a node under current hover by proximity (best-effort)
+    try {
+      const pos = networkRef.current?.DOMtoCanvas({ x: hoverState.x, y: hoverState.y });
+      if (!pos) return setPinnedTooltip({ active: true, nodeId: null, x: hoverState.x, y: hoverState.y, items: hoverState.items });
+      // Use last hovered aggregated node id by scanning nodeDetails entries whose list equals items
+      let matchId = null;
+      nodeDetails.forEach((list, id) => {
+        if (matchId != null) return;
+        if (Array.isArray(list) && list.length && hoverState.items.length && list.length === hoverState.items.length) {
+          // shallow compare a few fields
+          const a0 = list[0]; const b0 = hoverState.items[0];
+          if (a0 && b0 && a0.ip === b0.ip && a0.hopNumber === b0.hopNumber) matchId = id;
+        }
+      });
+      setPinnedTooltip({ active: true, nodeId: matchId, x: hoverState.x, y: hoverState.y, items: hoverState.items });
+    } catch {
+      setPinnedTooltip({ active: true, nodeId: null, x: hoverState.x, y: hoverState.y, items: hoverState.items });
+    }
+  }, [hoverState, graph, nodeDetails]);
+
+  // Unpin logic removed: background click now dismisses tooltip directly
+
+  // Bridge hover events from FullTraceroutePanel to graph highlighting
+  useEffect(() => {
+    const onHoverHop = (e) => {
+      try {
+        const detail = e?.detail || {};
+        const ip = detail.ip || null;
+        const isTimeout = !!detail.isTimeout;
+        const runId = detail.traceRunId || detail.trace_run_id || null;
+        const destAddr = detail.destinationAddress || null;
+        if (!graph || !nodeDetails) return;
+
+        // Find candidate node ids that match this hop (prefer exact IP match)
+        const candidates = [];
+        nodeDetails.forEach((list, nodeId) => {
+          if (!Array.isArray(list) || list.length === 0) return;
+          const any = list.some(d => {
+            if (isTimeout) return d.is_timeout === true;
+            return !!ip && d.ip === ip;
+          });
+          if (any) candidates.push(nodeId);
+        });
+
+        if (candidates.length === 0) return;
+
+        // If we have a specific run id, prefer nodes whose details include it; else prefer matching destination
+        let filtered = candidates;
+        if (runId) {
+          const byRun = candidates.filter(id => {
+            const list = nodeDetails.get(id) || [];
+            return list.some(d => d.trace_run_id === runId || d.run_id === runId);
+          });
+          if (byRun.length) filtered = byRun;
+        } else if (destAddr) {
+          const byDest = candidates.filter(id => {
+            const list = nodeDetails.get(id) || [];
+            return list.some(d => (d.destinationAddress || d.destination) === destAddr);
+          });
+          if (byDest.length) filtered = byDest;
+        }
+
+        // If multiple, prefer a node that participates in the most paths and/or
+        // has the closest hop number to the hovered hop
+        const hopIndex = Number.isFinite(detail.hopIndex) ? detail.hopIndex : (Number.isFinite(detail.hop) ? detail.hop : null);
+        let best = filtered[0];
+        let bestScore = -Infinity;
+        for (const id of filtered) {
+          const list = nodeDetails.get(id) || [];
+          const passCount = (pathMapping.get(id)?.size) || 0;
+          let hopCloseness = 0;
+          if (hopIndex != null) {
+            const diffs = list
+              .map(d => (d.hopNumber ?? d.hop))
+              .filter(n => Number.isFinite(n))
+              .map(n => -Math.abs(n - hopIndex)); // higher is better
+            hopCloseness = diffs.length ? Math.max(...diffs) : 0;
+          }
+          // Slight preference if this node's details include the runId/destAddr we care about
+          let affinity = 0;
+          if (runId && list.some(d => d.trace_run_id === runId || d.run_id === runId)) affinity += 5;
+          if (!runId && destAddr && list.some(d => (d.destinationAddress || d.destination) === destAddr)) affinity += 2;
+          const score = passCount * 10 + hopCloseness + affinity;
+          if (score > bestScore) { best = id; bestScore = score; }
+        }
+
+        // Highlight all paths through the chosen node (most-used solid, others dotted)
+        highlightPathsForNode(best);
+      } catch {
+        // ignore
+      }
+    };
+    const onLeave = () => clearHighlight();
+    const onClear = () => clearHighlight();
+    window.addEventListener('traceroute:hover-hop', onHoverHop);
+    window.addEventListener('traceroute:leave', onLeave);
+    window.addEventListener('graph:clearHighlight', onClear);
+    return () => {
+      window.removeEventListener('traceroute:hover-hop', onHoverHop);
+      window.removeEventListener('traceroute:leave', onLeave);
+      window.removeEventListener('graph:clearHighlight', onClear);
+    };
+  }, [graph, nodeDetails, pathMapping, highlightPathsForNode, clearHighlight]);
 
   // After networkInstance is set, apply highlight changes directly:
 useEffect(() => {
@@ -660,10 +767,36 @@ useEffect(() => {
           key={graphKey}
           graph={graph}
           options={options}
-          events={events}
+      events={{
+            ...events,
+            click: (e) => {
+              const isBackground = ((e?.nodes?.length || 0) === 0 && (e?.edges?.length || 0) === 0);
+              if (isBackground) {
+                // Close any tooltip on background click
+                setHoverState({ visible: false, x: 0, y: 0, items: [] });
+                setPinnedTooltip({ active: false, nodeId: null, x: 0, y: 0, items: [] });
+              } else if (hoverState.visible && hoverState.items?.length) {
+                // Pin current hover tooltip on any node/edge click
+                handlePinFromHover();
+              }
+              events.click?.(e);
+            }
+          }}
           getNetwork={getNetwork}
         />
       </GraphErrorBoundary>
+
+  <AggregatedHopTooltip
+        visible={pinnedTooltip.active ? true : hoverState.visible}
+        x={pinnedTooltip.active ? pinnedTooltip.x : hoverState.x}
+        y={pinnedTooltip.active ? pinnedTooltip.y : hoverState.y}
+        items={pinnedTooltip.active ? pinnedTooltip.items : hoverState.items}
+        pinned={pinnedTooltip.active}
+        onMove={(nx, ny) => {
+          // Only allow moving when pinned
+          setPinnedTooltip((prev) => prev.active ? { ...prev, x: nx, y: ny } : prev);
+        }}
+      />
 
       <GraphControls
         isFullscreen={isFullscreen}
@@ -680,6 +813,8 @@ useEffect(() => {
         showPrefixAggregation={showPrefixAggregation}
         onTogglePrefixAggregation={handlePrefixAggregationToggle}
         expandedCount={expandedPrefixes.size + expandedAsnGroups.size}
+  disableShowAllPaths={isHeavyQuery}
+  disableReason={isHeavyQuery ? 'Disabled for large selection (many destinations or long time range)' : ''}
         // Network hierarchy controls
         networkHierarchy={networkHierarchy}
         onNetworkHierarchyChange={handleNetworkHierarchyChange}

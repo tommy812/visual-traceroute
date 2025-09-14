@@ -40,8 +40,8 @@ const Sidebar = ({
   setMinUsagePercent,
   showPrimaryOnly,
   setShowPrimaryOnly,
-  hideTimeouts,
-  setHideTimeouts,
+  hideReachedOnly,
+  setHideReachedOnly,
   showReachedOnly,
   setShowReachedOnly,
 
@@ -115,8 +115,8 @@ const Sidebar = ({
         minUsagePercent={minUsagePercent}
         setMinUsagePercent={setMinUsagePercent}
         showPrimaryOnly={showPrimaryOnly}
-        hideTimeouts={hideTimeouts}          // NEW
-        setHideTimeouts={setHideTimeouts}  
+        hideReachedOnly={hideReachedOnly}          // NEW
+        setHideReachedOnly={setHideReachedOnly}  
   showReachedOnly={showReachedOnly}
   setShowReachedOnly={setShowReachedOnly}
         setShowPrimaryOnly={setShowPrimaryOnly}
