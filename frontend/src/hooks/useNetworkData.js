@@ -11,7 +11,10 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
   // Guard against race conditions: only latest request may update state
   const requestIdRef = useRef(0);
 
-  // Memoize the fetch parameters to prevent unnecessary API calls
+  // Memoize the fetch parameters to prevent unnecessary API calls.
+  // NOTE: intentionally omit `selectedProtocols` from these params so toggling
+  // protocols in the UI doesn't trigger a backend fetch. Protocol filtering is
+  // applied client-side against already-fetched path data.
   const fetchParams = useMemo(() => {
     if (selectedDestinations.length === 0) return null;
     
@@ -23,23 +26,18 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
       if (dest && dest.id != null) return String(dest.id);     // object with id
       return dest?.address;                                    // fallback address
     }).filter(Boolean);
-    
-    // Normalize protocols to a stable, sorted array for equality checks/fetching
-    const protoList = Array.isArray(selectedProtocols) ? [...new Set(selectedProtocols)] : [];
-    protoList.sort();
 
     const params = {
       destinations: destinationStrings,
       start_date: dateRange.start ? toLondonISO(dateRange.start) : undefined,
-      end_date: dateRange.end ? toLondonISO(dateRange.end) : undefined,
-      selectedProtocols: protoList
+      end_date: dateRange.end ? toLondonISO(dateRange.end) : undefined
     };
     
     // Only include defined parameters
     return Object.fromEntries(
       Object.entries(params).filter(([_, value]) => value !== undefined)
     );
-  }, [selectedDestinations, dateRange.start, dateRange.end, selectedProtocols]);
+  }, [selectedDestinations, dateRange.start, dateRange.end]);
 
   // Check if we need to fetch new data
   const shouldFetch = useMemo(() => {
