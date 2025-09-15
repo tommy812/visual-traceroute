@@ -15,7 +15,7 @@
   background: #ffffffdd;
   border: 1px solid #1976d2;
   color: #1976d2;
-  padding: 10px 16px;
+  padding: 12px 16px;
   font-size: 14px;
   font-weight: 600;
   border-radius: 6px;
@@ -72,6 +72,33 @@
   color: #2f3c4c;
   max-width: 560px;
   font-weight: 500;
+}
+
+.landing-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.landing-gh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: #000;
+  color: #fff;
+  text-decoration: none;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-weight: 700;
+  letter-spacing: .2px;
+  box-shadow: 0 6px 18px -6px rgba(0,0,0,.35);
+  transition: transform .2s ease, box-shadow .2s ease, background .2s ease;
+}
+
+.landing-gh-pill:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -8px rgba(0,0,0,.45);
+  background: #111;
 }
 
 .landing-button {
@@ -173,12 +200,16 @@
   box-shadow: 0 6px 20px -6px rgba(13,71,161,.4);
   transform: translateY(-3px);
 }
+/* Keep Documentation button at top-right on mobile; remove old top-right GitHub in favor of pill */
 @media (max-width: 1100px) {
-  .landing-github-btn,
-  .landing-docs-btn {
-    position: static;
-    display: inline-flex;
-    align-self: flex-end;
-    margin: 12px 8px 0 8px;
+  .landing-docs-btn,
+  .landing-github-btn {
+    position: absolute;
+    top: 12px;
+    right: 16px;
+  }
+  .landing-github-btn {
+    right: 110px; /* keep GitHub to the left of Docs */
+    margin-right: 0;
   }
 }
