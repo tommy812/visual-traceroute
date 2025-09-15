@@ -38,7 +38,7 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
   const groups = new Map();
   const makeDestKey = (it) => {
     const addr = it.destinationAddress || it.destination || 'Unknown';
-    const name = it.destination || null;
+    const name = it.destinationDomain || it.domainName || null;
     return name ? `${addr} (${name})` : addr;
   };
   for (const it of items) {
@@ -55,7 +55,29 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
         hostname,
         count: 1,
         minHop: Number.isFinite(hopNumber) ? hopNumber : null,
-        maxHop: Number.isFinite(hopNumber) ? hopNumber : null
+        maxHop: Number.isFinite(hopNumber) ? hopNumber : null,
+        // NEW aggregations for badges/summary
+        protoSet: new Set(it.protocol ? [String(it.protocol)] : []),
+        asnSet: new Set((it.asn != null && String(it.asn).trim() !== '') ? [String(it.asn)] : []),
+        rttCount: (() => {
+          if (Number.isFinite(it.avg_rtt_ms)) return 1;
+          return Array.isArray(it.rtt_ms) ? it.rtt_ms.length : 0;
+        })(),
+        rttSum: (() => {
+          if (Number.isFinite(it.avg_rtt_ms)) return Number(it.avg_rtt_ms);
+          return Array.isArray(it.rtt_ms) ? it.rtt_ms.reduce((a, b) => a + b, 0) : 0;
+        })(),
+        rttMin: (() => {
+          if (Number.isFinite(it.avg_rtt_ms)) return Number(it.avg_rtt_ms);
+          return (Array.isArray(it.rtt_ms) && it.rtt_ms.length) ? Math.min(...it.rtt_ms) : Infinity;
+        })(),
+        rttMax: (() => {
+          if (Number.isFinite(it.avg_rtt_ms)) return Number(it.avg_rtt_ms);
+          return (Array.isArray(it.rtt_ms) && it.rtt_ms.length) ? Math.max(...it.rtt_ms) : -Infinity;
+        })(),
+        lossSet: (() => {
+          return Number.isFinite(it.loss_pct) ? [Number(it.loss_pct)] : [];
+        })()
       });
     } else {
       const rec = ipMap.get(key);
@@ -66,59 +88,184 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
       }
       // prefer a non-generic hostname if available
       if (hostname && rec.hostname === rec.ip) rec.hostname = hostname;
+      // aggregate protocol, ASN, RTTs
+      if (it.protocol) rec.protoSet.add(String(it.protocol));
+      if (it.asn != null && String(it.asn).trim() !== '') rec.asnSet.add(String(it.asn));
+      if (Number.isFinite(it.avg_rtt_ms)) {
+        rec.rttCount += 1;
+        rec.rttSum += Number(it.avg_rtt_ms);
+        rec.rttMin = Math.min(rec.rttMin, Number(it.avg_rtt_ms));
+        rec.rttMax = Math.max(rec.rttMax, Number(it.avg_rtt_ms));
+      } else if (Array.isArray(it.rtt_ms) && it.rtt_ms.length) {
+        rec.rttCount += it.rtt_ms.length;
+        rec.rttSum += it.rtt_ms.reduce((a, b) => a + b, 0);
+        rec.rttMin = Math.min(rec.rttMin, Math.min(...it.rtt_ms));
+        rec.rttMax = Math.max(rec.rttMax, Math.max(...it.rtt_ms));
+      }
+      if (Number.isFinite(it.loss_pct)) {
+        if (!Array.isArray(rec.lossSet)) rec.lossSet = [];
+        rec.lossSet.push(Number(it.loss_pct));
+      }
     }
   }
-  if (groups.size === 0) return null;
+  const timeoutOnly = groups.size === 0;
+
+  const headerText = `Paths at this hop: ${items.length}`;
+  const S = {
+    container: {
+      position: 'absolute',
+      top: y + 12,
+      left: x + 12,
+      maxWidth: 460,
+      background: '#ffffffee',
+      border: '1px solid #D6D6D6',
+      borderRadius: 10,
+      boxShadow: '0 12px 28px rgba(0,0,0,0.18)',
+      padding: 0,
+      zIndex: 20,
+      pointerEvents: pinned ? 'auto' : 'none',
+      cursor: pinned ? (dragging ? 'grabbing' : 'grab') : 'default',
+      userSelect: dragging ? 'none' : 'auto',
+      fontFamily: 'Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif',
+      fontSize: 12,
+      color: '#222',
+      transition: 'box-shadow 120ms ease',
+    },
+    header: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 8,
+      padding: '8px 10px',
+      background: pinned ? '#f0f9ff' : '#f6f7f9',
+      color: '#111',
+      borderTopLeftRadius: 10,
+      borderTopRightRadius: 10,
+      borderBottom: '1px solid #e5e7eb',
+    },
+    body: { maxHeight: 300, overflowY: 'auto', padding: '8px 10px' },
+    group: { marginBottom: 10, border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' },
+    groupTitle: { fontWeight: 700, color: '#333', padding: '8px 10px', background: '#fafafa', borderBottom: '1px solid #eee' },
+    row: (alt) => ({ display: 'flex', flexDirection: 'column', gap: 6, padding: '8px 10px', background: alt ? '#fff' : '#fcfcfd' }),
+    rowTop: { display: 'flex', gap: 8, alignItems: 'baseline' },
+    hopChip: {
+      minWidth: 78,
+      color: '#344054',
+      background: '#eef2ff',
+      border: '1px solid #e0e7ff',
+      padding: '2px 8px',
+      borderRadius: 999,
+      fontSize: 11,
+      fontWeight: 700,
+      textAlign: 'center',
+    },
+    host: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#111827' },
+    ip: { color: '#6b7280', fontVariantNumeric: 'tabular-nums' },
+    count: { marginLeft: 6, color: '#6b7280' },
+  badges: { display: 'flex', gap: 6, flexWrap: 'wrap', marginLeft: 78 },
+    protoBadge: { background: '#e3f2fd', color: '#0b69b9', border: '1px solid #bbdefb', borderRadius: 10, padding: '2px 6px', fontSize: 10, fontWeight: 700 },
+  lossBadge: { background: '#fdecea', color: '#b42318', border: '1px solid #facdcd', borderRadius: 10, padding: '2px 6px', fontSize: 10, fontWeight: 700 },
+    summary: { color: '#374151', fontSize: 11, marginLeft: 78 },
+  };
+
+  // Render timeout-only fallback after styles are declared
+  if (timeoutOnly) {
+    const timeouts = Array.isArray(items) ? items.filter(it => it && (it.is_timeout || !it.ip)) : [];
+    if (timeouts.length === 0) return null;
+    const hopNums = Array.from(new Set(timeouts.map(t => t.hopNumber).filter(n => Number.isFinite(n)))).sort((a,b)=>a-b);
+    const dests = Array.from(new Set(
+      timeouts.map(t => {
+        const addr = t.destinationAddress || t.destination || 'Unknown';
+        const dom = t.destinationDomain || t.domainName || null;
+        return dom ? `${addr} (${dom})` : addr;
+      }).filter(Boolean)
+    ));
+    const headerText2 = `Timeout hop${hopNums.length > 1 ? 's' : ''}${hopNums.length ? `: ${hopNums.join(', ')}` : ''}`;
+    return (
+      <div style={S.container} onMouseDown={onMouseDownHeader}>
+        <div style={S.header}>
+          <div style={{ fontWeight: 600 }}>{headerText2}</div>
+          <span style={{ fontSize: 10, color: '#666' }}>{pinned ? 'Click Screen to unpin' : 'Click to pin'}</span>
+        </div>
+        <div style={S.body}>
+          <div style={{ marginBottom: 6 }}>
+            <strong>Count:</strong> {timeouts.length} occurrence{timeouts.length !== 1 ? 's' : ''}
+          </div>
+          {dests.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <strong>Destinations:</strong> {dests.join(', ')}
+            </div>
+          )}
+          <div style={{ color: '#555' }}>
+            No IP response received for these hop(s).
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div
-      style={{
-        position: 'absolute',
-        top: y + 12,
-        left: x + 12,
-        maxWidth: 420,
-        // outer box visible with header fixed; inner scroll area below
-        background: '#fffffe',
-        border: '1px solid #808074',
-        borderRadius: 6,
-        boxShadow: '3px 3px 10px rgba(0,0,0,0.2)',
-        padding: '8px 10px',
-        zIndex: 20,
-        pointerEvents: pinned ? 'auto' : 'none',
-        cursor: pinned ? (dragging ? 'grabbing' : 'grab') : 'default',
-        userSelect: dragging ? 'none' : 'auto',
-        fontFamily: 'Arial, Verdana, sans-serif',
-        fontSize: 12,
-        color: '#222'
-      }}
-      onMouseDown={onMouseDownHeader}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+    <div style={S.container} onMouseDown={onMouseDownHeader}>
+      <div style={S.header}>
         {/* Do not alter the next two lines! */}
-        <div style={{ fontWeight: 600 }}>{`Aggregated hops: "${items.length}"`}</div>
+        <div style={{ fontWeight: 600 }}>{headerText}</div>
         <span style={{ fontSize: 10, color: '#666' }}>{pinned ? 'Click Screen to unpin' : 'Click to pin'}</span>
-
       </div>
-      <div style={{ maxHeight: 260, overflowY: 'auto', paddingRight: 4 }}>
+      <div style={S.body}>
         {Array.from(groups.entries()).map(([dest, ipMap]) => {
           const rows = Array.from(ipMap.values()).sort((a, b) => (a.minHop ?? 0) - (b.minHop ?? 0));
           return (
-            <div key={dest} style={{ marginBottom: 10 }}>
-              <div style={{ fontWeight: 600, color: '#333', marginBottom: 4 }}>{dest}</div>
+            <div key={dest} style={S.group}>
+              <div style={S.groupTitle}>{dest}</div>
               {rows.map((r, i) => (
-                <div key={`${dest}-${r.ip}-${i}`} style={{ display: 'flex', gap: 8, marginBottom: 3 }}>
-                  <span style={{ minWidth: 64, color: '#555' }}>
-                    {r.minHop != null && r.maxHop != null && r.minHop !== r.maxHop
-                      ? `Hops ${r.minHop}-${r.maxHop}`
-                      : `Hop ${r.minHop ?? r.maxHop ?? '?'}`}
-                  </span>
-                  <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {r.hostname}
-                  </span>
-                  <span style={{ color: '#666' }}>({r.ip})</span>
-                  {r.count > 1 && (
-                    <span style={{ marginLeft: 6, color: '#444' }}>×{r.count}</span>
-                  )}
+                <div key={`${dest}-${r.ip}-${i}`} style={S.row(i % 2 === 1)}>
+                  <div style={S.rowTop}>
+                    <span style={S.hopChip}>
+                      {r.minHop != null && r.maxHop != null && r.minHop !== r.maxHop
+                        ? `Hops ${r.minHop}-${r.maxHop}`
+                        : `Hop ${r.minHop ?? r.maxHop ?? '?'}`}
+                    </span>
+                    <span style={S.host}>{r.hostname}</span>
+                    <span style={S.ip}>({r.ip})</span>
+                    {r.count > 1 && <span style={S.count}>×{r.count}</span>}
+                  </div>
+                  {(r.protoSet && r.protoSet.size > 0) || (Array.isArray(r.lossSet) && r.lossSet.length > 0) ? (
+                    <div style={S.badges}>
+                      {r.protoSet && Array.from(r.protoSet).map((p) => (
+                        <span key={`${dest}-${r.ip}-p-${p}`} style={S.protoBadge}>{p}</span>
+                      ))}
+                      {Array.isArray(r.lossSet) && r.lossSet.length > 0 && (() => {
+                        const avgLoss = r.lossSet.reduce((a,b)=>a+b,0)/r.lossSet.length;
+                        const rounded = Math.round(avgLoss);
+                        const color = rounded === 100 ? '#b42318' : (rounded === 50 ? '#ba992dff' : undefined);
+                        return (
+                          <span key={`${dest}-${r.ip}-loss`} style={{ color }}>
+                            Loss ~ {rounded}%
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  ) : null}
+                  <div style={S.summary}>
+                    {(() => {
+                      const parts = [];
+                      if (r.rttCount > 0) {
+                        const avg = (r.rttSum / r.rttCount).toFixed(2);
+                        const mn = (r.rttMin).toFixed(2);
+                        const mx = (r.rttMax).toFixed(2);
+                        parts.push(`RTT avg ${avg}ms (${mn}–${mx})`);
+                      }
+                      if (r.asnSet && r.asnSet.size > 0) {
+                        const labels = Array.from(r.asnSet).map(a => {
+                          const m = String(a).match(/\d+/);
+                          return m ? `AS${m[0]}` : `AS ${a}`;
+                        }).slice(0, 3);
+                        const more = r.asnSet.size > 3 ? ` +${r.asnSet.size - 3}` : '';
+                        parts.push(`ASN: ${labels.join(', ')}${more}`);
+                      }
+                      return parts.length ? parts.join(' • ') : null;
+                    })()}
+                  </div>
                 </div>
               ))}
             </div>

@@ -381,8 +381,10 @@ export function buildGraph({
           ip: hop?.ip ?? null,
           hostname: hop?.hostname ?? (hop?.ip ?? 'Timeout'),
           rtt_ms: hop?.rtt_ms ?? [],
+          avg_rtt_ms: (hop?.avg_rtt_ms != null ? Number(hop.avg_rtt_ms) : null),
+          loss_pct: (hop?.loss_pct != null ? Number(hop.loss_pct) : null),
           destination,
-          domainName: destData?.domain?.name || null,          // <--- add
+          domainName: pathObj?.destination_domain || destData?.domain?.name || null,
           hopNumber,
           // Total hops in this path (for drawer display)
           pathLength: Array.isArray(hops) ? hops.length : null,
@@ -400,7 +402,8 @@ export function buildGraph({
           pathId,
           // NEW: attach run id and destination address so drawer can fetch exact trace
           trace_run_id: pathObj?.run_id ?? null,
-          destinationAddress: destData?.destination || destination || null
+          destinationAddress: destData?.destination || destination || null,
+          destinationDomain: pathObj?.destination_domain || destData?.domain?.name || null
         });
       });
     };
@@ -522,7 +525,7 @@ export function buildGraph({
     // - <type>:(value)?@d:<dest>@h:<hop>@p:<pathId> (show all paths)
     // - <type>:(value)?@d:<dest>@h:<hop> (per-destination)
     // - <type>:(value)?@h:<hop> (cross-destination/shared)
-    let left, rest, dest, hopStr;
+  let left, rest, hopStr;
 
   // Handle path ID suffix first (for "none" mode)
     let cleanKey = key;
@@ -530,16 +533,14 @@ export function buildGraph({
       cleanKey = key.substring(0, key.lastIndexOf('@p:'));
     }
 
-    if (cleanKey.includes('@d:')) {
+  if (cleanKey.includes('@d:')) {
       // Per-destination format: <type>:(value)?@d:<dest>@h:<hop>
       [left, rest] = cleanKey.split('@d:');
       const [destAndHop] = rest.split('@h:');
-      dest = destAndHop;
       hopStr = rest.substring(destAndHop.length + 3);
     } else {
       // Cross-destination format: <type>:(value)?@h:<hop>
       [left, rest] = cleanKey.split('@h:');
-      dest = 'cross-destination'; // placeholder for display
       hopStr = rest;
     }
 
@@ -565,14 +566,14 @@ export function buildGraph({
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
-        const isMaxTtl = hopNumber === 30;
         const uniqueDestCount = new Set(list.map(d => d.destination).filter(Boolean)).size;
         const uniquePathCount = new Set(list.map(d => d.pathId).filter(Boolean)).size;
         const aggregated = uniqueDestCount > 1 || uniquePathCount > 1;
         return {
           id,
           label: aggregated ? `⏱️×${uniqueDestCount || uniquePathCount}` : '⏱️',
-          title: `${isMaxTtl ? 'Max TTL reached' : 'Timeout'} • Hop #${hopNumber}\n${aggregated ? `Destinations: ${uniqueDestCount} • Paths: ${uniquePathCount}` : dest}`,
+          // Disable vis-network native tooltip; we use custom overlays
+          title: undefined,
           color: { background: '#F44336', border: '#D32F2F' },
           font: { size: 12, color: '#FFF', strokeWidth: 2, strokeColor: '#fff' },
           shape: 'dot',
@@ -591,11 +592,11 @@ export function buildGraph({
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
-        const hostLine = (display && display !== value) ? `Host: ${display}\n` : '';
         return {
           id,
           label: display,
-          title: `${hostLine}IP: ${value}\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
+          // Disable vis-network native tooltip; we use custom overlays
+          title: undefined,
           color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
           font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
           shape: isTerminal ? 'box' : 'dot',
@@ -622,11 +623,11 @@ export function buildGraph({
         if (!isAggregatedPrefix) {
           // Treat as a normal hop using the standard green styling
           const isTerminal = list.some(d => d.destinationReached);
-          const hostLine2 = (fallbackLabel && fallbackLabel !== (firstDetail?.ip || null)) ? `Host: ${fallbackLabel}\n` : '';
           return {
             id,
             label: fallbackLabel,
-            title: `${hostLine2}IP: ${firstDetail?.ip || fallbackLabel}\n(Hierarchy mask produced no aggregation)\nHop #${hopNumber} • ${dest}${isTerminal ? '\nDestination reached' : ''}`,
+            // Disable vis-network native tooltip; we use custom overlays
+            title: undefined,
             color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
             font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
             shape: isTerminal ? 'box' : 'dot',
@@ -923,12 +924,10 @@ export function buildGraph({
         filteredData?.[d]?.domain?.name ||
         filteredData?.[d]?.domainName ||
         null;
-      return dom ? `${d} (${dom})` : d;
+      return { address: d, domain: dom };
     });
-    const destinationsBlock = destinationLines.length
-      ? `Destinations:\n${destinationLines.join('\n')}\n`
-      : '';
-    const titleMany = `${destinationsBlock}Paths: ${usage.paths.size}`;
+  // Native tooltip removed; destination lines kept on edge object for custom UI only
+  // vis native tooltip disabled; keep only custom overlays
 
     const straightLineStyle = { type: 'continuous', roundness: 0.0, forceDirection: 'horizontal' };
     const normalCurveStyle = { type: 'continuous', roundness: 0.4, forceDirection: 'horizontal' };
@@ -948,8 +947,9 @@ export function buildGraph({
         smooth: pathIds.length > 1 ? curvedForIndex(idx, pathIds.length) : (isAggregated ? straightLineStyle : normalCurveStyle),
         dashes: false,
         arrowStrikethrough: false,
-        title: pathIds.length > 1 ? titleMany : destinationsBlock ? `${destinationsBlock}Path` : 'Path',
-        destinations: destinationLines,
+        // Disable vis-network native tooltip; we use custom overlays
+        title: undefined,
+  destinations: destinationLines,
         paths: [pid]
       });
       if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());

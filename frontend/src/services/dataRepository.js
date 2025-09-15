@@ -1,16 +1,18 @@
 import apiService from './api';
 import dataTransformer from './dataTransformer';
 import networkDataCache from './networkDataCache';
-import { getLast30DaysRange } from '../utils/dateUtils';
+import { getLast30DaysRange, toLondonISO } from '../utils/dateUtils';
 
-// Split raw runs by destination address
+// Split raw runs by destination id (string) when available; fallback to address
 function splitRunsByDestination(rawRuns) {
   const map = new Map();
   (Array.isArray(rawRuns) ? rawRuns : []).forEach(run => {
-    const addr = run?.destinations?.address || run?.destination?.address || null;
-    if (!addr) return;
-    if (!map.has(addr)) map.set(addr, []);
-    map.get(addr).push(run);
+    const key = (run?.destination_id != null)
+      ? String(run.destination_id)
+      : (run?.destinations?.address || run?.destination?.address || null);
+    if (!key) return;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(run);
   });
   return map;
 }
@@ -91,8 +93,8 @@ const dataRepository = {
     try {
       const res = await apiService.getNetworkData({
         destinations,
-        start_date: range.start.toISOString(),
-        end_date: range.end.toISOString()
+        start_date: toLondonISO(range.start),
+        end_date: toLondonISO(range.end)
       });
       const rawRuns = Array.isArray(res?.data) ? res.data : [];
       const byDest = splitRunsByDestination(rawRuns);

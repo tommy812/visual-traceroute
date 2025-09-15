@@ -3,6 +3,7 @@ import Graph from 'react-graph-vis';
 import ipGeoService from '../../../services/ipGeoService';
 import GraphControls from './GraphControls';
 import AggregatedHopTooltip from './AggregatedHopTooltip';
+import EdgeTooltip from './EdgeTooltip';
 
 
 import { useNetworkGraphModel, useGraphData, usePathHighlighting, useGraphFullscreen, useGraphExport } from '../../../hooks';
@@ -50,6 +51,8 @@ const NetworkGraph = React.memo(({
   const [layoutOptimization, setLayoutOptimization] = useState('minimal-crossings');
   const [hoverState, setHoverState] = useState({ visible: false, x: 0, y: 0, items: [] });
   const [pinnedTooltip, setPinnedTooltip] = useState({ active: false, nodeId: null, x: 0, y: 0, items: [] });
+  const [edgeHover, setEdgeHover] = useState({ visible: false, x: 0, y: 0, edge: null });
+  const [pinnedEdge, setPinnedEdge] = useState({ active: false, x: 0, y: 0, edge: null });
 
  
 
@@ -546,6 +549,8 @@ const NetworkGraph = React.memo(({
         clearHighlight();
         setHoverState({ visible: false, x: 0, y: 0, items: [] });
         setPinnedTooltip({ active: false, nodeId: null, x: 0, y: 0, items: [] });
+        setEdgeHover({ visible: false, x: 0, y: 0, edge: null });
+        setPinnedEdge({ active: false, x: 0, y: 0, edge: null });
       }
     },
     hoverNode: function (event) {
@@ -555,24 +560,35 @@ const NetworkGraph = React.memo(({
         const id = typeof node === 'string' ? parseInt(node, 10) : node;
         const nd = graph.nodes.find(n => n.id === id);
         if (!nd) { if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] }); return; }
-        // Only show for aggregated groups (prefix or asn)
-        if (nd.nodeType === 'prefix' || nd.nodeType === 'asn') {
-          const items = nodeDetails.get(id) || [];
-          // Filter to the current hop level to avoid listing unrelated steps
-          const list = Array.isArray(items) ? items.filter(it => (it?.is_timeout !== true)) : [];
-          if (!pinnedTooltip.active || pinnedTooltip.nodeId !== id) {
-            setHoverState({ visible: list.length > 0, x: pointer?.DOM?.x || 0, y: pointer?.DOM?.y || 0, items: list });
-          }
-        } else {
-          if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] });
+
+        // Use our tooltip for all node types. For timeout nodes, data set may be empty and the tooltip will hide itself.
+        const items = nodeDetails.get(id) || [];
+        const list = Array.isArray(items)
+          ? ((nd?.nodeType === 'timeout' || nd?.nodeType === 'timeout_group') ? items : items.filter(it => (it?.is_timeout !== true)))
+          : [];
+
+        if (!pinnedTooltip.active || pinnedTooltip.nodeId !== id) {
+          setHoverState({ visible: list.length > 0, x: pointer?.DOM?.x || 0, y: pointer?.DOM?.y || 0, items: list });
         }
       } catch {
         if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] });
       }
     },
     blurNode: function () { if (!pinnedTooltip.active) setHoverState({ visible: false, x: 0, y: 0, items: [] }); },
-    hoverEdge: function () {}
-  }), [pinnedTooltip, handleAsnToggle,pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode, expandedPrefixes, handlePrefixCollapse, networkHierarchy]);
+    hoverEdge: function (event) {
+      try {
+        const { edge, pointer } = event || {};
+        if (!edge) { if (!pinnedEdge.active) setEdgeHover({ visible: false, x: 0, y: 0, edge: null }); return; }
+        const eid = typeof edge === 'string' ? edge : String(edge);
+        const e = graph.edges.find(ed => ed.id === eid);
+        if (!e) { if (!pinnedEdge.active) setEdgeHover({ visible: false, x: 0, y: 0, edge: null }); return; }
+        if (!pinnedEdge.active) setEdgeHover({ visible: true, x: pointer?.DOM?.x || 0, y: pointer?.DOM?.y || 0, edge: e });
+      } catch {
+        if (!pinnedEdge.active) setEdgeHover({ visible: false, x: 0, y: 0, edge: null });
+      }
+    },
+    blurEdge: function () { if (!pinnedEdge.active) setEdgeHover({ visible: false, x: 0, y: 0, edge: null }); }
+  }), [pinnedTooltip, pinnedEdge.active, handleAsnToggle, pathMapping, graph, nodeDetails, handleHopSelection, clearHighlight, handlePrefixToggle, highlightPath, onHopSelect, highlightPathsForNode, expandedPrefixes, handlePrefixCollapse, networkHierarchy]);
   // Memoize the getNetwork callback
   const getNetwork = useCallback((network) => {
     networkRef.current = network;
@@ -775,9 +791,14 @@ useEffect(() => {
                 // Close any tooltip on background click
                 setHoverState({ visible: false, x: 0, y: 0, items: [] });
                 setPinnedTooltip({ active: false, nodeId: null, x: 0, y: 0, items: [] });
+                setEdgeHover({ visible: false, x: 0, y: 0, edge: null });
+                setPinnedEdge({ active: false, x: 0, y: 0, edge: null });
               } else if (hoverState.visible && hoverState.items?.length) {
                 // Pin current hover tooltip on any node/edge click
                 handlePinFromHover();
+              } else if (edgeHover.visible && edgeHover.edge) {
+                // Pin edge tooltip
+                setPinnedEdge({ active: true, x: edgeHover.x, y: edgeHover.y, edge: edgeHover.edge });
               }
               events.click?.(e);
             }
@@ -796,6 +817,18 @@ useEffect(() => {
           // Only allow moving when pinned
           setPinnedTooltip((prev) => prev.active ? { ...prev, x: nx, y: ny } : prev);
         }}
+      />
+
+      <EdgeTooltip
+        visible={pinnedEdge.active ? true : edgeHover.visible}
+        x={pinnedEdge.active ? pinnedEdge.x : edgeHover.x}
+        y={pinnedEdge.active ? pinnedEdge.y : edgeHover.y}
+        edge={pinnedEdge.active ? pinnedEdge.edge : edgeHover.edge}
+        getNodeLabel={(id) => {
+          const n = graph?.nodes?.find?.(nn => nn.id === id);
+          return n?.label || String(id);
+        }}
+        onMove={(nx, ny) => setPinnedEdge(prev => prev.active ? { ...prev, x: nx, y: ny } : prev)}
       />
 
       <GraphControls

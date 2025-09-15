@@ -3,7 +3,7 @@
 
 class NetworkDataCache {
   constructor() {
-    // Map<string destinationAddress, { runsById: Map<string,object>, last30DaysCovered: boolean }>
+    // Map<string destinationKey (prefer destination_id), { runsById: Map<string,object>, last30DaysCovered: boolean }>
     this.byDestination = new Map();
   }
 

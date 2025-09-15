@@ -17,6 +17,7 @@ const LandingPage = ({ onEnter, onShowDocs }) => {
         <p className="landing-subtitle">
           Explore end-to-end network paths, latency, alternative routes, and hop level details with interactive visual analytics.
         </p>
+        
         <button className="landing-button" onClick={onEnter}>
           Open Charts →
         </button>
@@ -26,7 +27,7 @@ const LandingPage = ({ onEnter, onShowDocs }) => {
       </div>
       <div className="landing-right">
         <img
-          src={process.env.PUBLIC_URL + '/graph.svg'}
+          src={process.env.PUBLIC_URL + '/graph.png'}
           alt="Network graph illustration"
           className="landing-illustration"
           draggable="false"

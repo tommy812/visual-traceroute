@@ -57,7 +57,7 @@ app.get('/health', (req, res) => {
   res.json({
     success: true,
     message: 'Server is running',
-    timestamp: new Date().toISOString(),
+  timestamp: (require('luxon').DateTime).now().setZone('Europe/London').toISO(),
     environment: process.env.NODE_ENV || 'development'
   });
 });

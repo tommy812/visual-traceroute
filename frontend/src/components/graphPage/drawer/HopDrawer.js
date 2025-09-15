@@ -35,8 +35,9 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
 
 
 
-    // Get unique destinations and path types
-    const destinations = [...new Set(hopData.map(h => h.destination))];
+  // Get unique destinations and path types
+  const destinations = [...new Set(hopData.map(h => h.destination))];
+  const destinationDomains = [...new Set(hopData.map(h => h.destinationDomain).filter(Boolean))];
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
     const protocols = [...new Set(hopData.map(h => (typeof h.protocol === 'string' ? h.protocol.trim() : h.protocol)).filter(Boolean))];
 
@@ -59,7 +60,8 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
       hasLoadingGeoData,
       isTimeoutHop,
       hasValidIP,
-      protocols
+  protocols,
+  destinationDomains
     };
   }, [hopData]);
 
@@ -252,7 +254,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, destinationDomains, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
 
 
   return (
@@ -386,6 +388,11 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             <div style={{ marginBottom: '10px' }}>
               <strong>Destinations:</strong> {Array.from(new Set(visibleHops.map(h => h.destination))).join(', ') || destinations.join(', ')}
             </div>
+            {destinationDomains && destinationDomains.length > 0 && (
+              <div style={{ marginBottom: '10px' }}>
+                <strong>Domain:</strong> {destinationDomains.join(', ')}
+              </div>
+            )}
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
@@ -506,7 +513,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                   borderTop: '1px solid rgba(255,255,255,0.2)',
                   paddingTop: '8px'
                 }}>
-                  📅 Data fetched: {new Date(currentGeoData.fetchedAt).toLocaleString()}
+                  📅 Data fetched: {require('../../../utils/dateUtils').formatDate(new Date(currentGeoData.fetchedAt))}
                 </div>
               )}
             </div>
@@ -776,7 +783,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                   <div style={{ marginBottom: '5px' }}>
                     📅 <strong>Timestamp{hop._perRun ? '' : 's'}:</strong>{' '}
                     {hop._perRun ? (
-                      <span>{new Date(hop.timestamp).toLocaleString()}</span>
+                      <span>{require('../../../utils/dateUtils').formatDate(new Date(hop.timestamp))}</span>
                     ) : (
                       <div>
                         {(() => {
@@ -787,7 +794,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                           const uniq = Array.from(new Set(baseList.filter(Boolean)));
                           uniq.sort((a, b) => new Date(a) - new Date(b));
                           return uniq.map((ts, i) => (
-                            <div key={i}>{new Date(ts).toLocaleString()}</div>
+                            <div key={i}>{require('../../../utils/dateUtils').formatDate(new Date(ts))}</div>
                           ));
                         })()}
                       </div>
@@ -808,9 +815,11 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
               }}>
                 <div style={{ marginBottom: '8px' }}>
                   <strong>⚡ Hop RTT:</strong>{' '}
-                  {Array.isArray(hop.rtt_ms) && hop.rtt_ms.length
-                    ? `${(hop.rtt_ms.reduce((a, b) => a + b, 0) / hop.rtt_ms.length).toFixed(2)}ms`
-                    : 'N/A'}
+                  {Number.isFinite(hop.avg_rtt_ms)
+                    ? `${Number(hop.avg_rtt_ms).toFixed(2)}ms`
+                    : (Array.isArray(hop.rtt_ms) && hop.rtt_ms.length
+                        ? `${(hop.rtt_ms.reduce((a, b) => a + b, 0) / hop.rtt_ms.length).toFixed(2)}ms`
+                        : 'N/A')}
                 </div>
                 {hop.rtt_ms && (
                   <div>
@@ -836,6 +845,15 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                     </div>
                   </div>
                 )}
+                {Number.isFinite(hop.loss_pct) && (() => {
+                  const rounded = Math.round(hop.loss_pct);
+                  const color = rounded === 100 ? '#b42318' : (rounded === 50 ? '#ba992dff' : undefined);
+                  return (
+                    <div style={{ marginTop: '6px', color }}>
+                      <strong>Packet Loss:</strong> {rounded}%
+                    </div>
+                  );
+                })()}
               </div>
 
 

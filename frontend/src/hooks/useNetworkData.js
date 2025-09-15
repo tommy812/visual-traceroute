@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import dataRepository from '../services/dataRepository';
+import { toLondonISO } from '../utils/dateUtils';
 
 // dataMode: 'auto' | 'aggregated' | 'per-run'
 export const useNetworkData = (selectedDestinations, dateRange, selectedProtocols, dataMode = 'auto') => {
@@ -17,9 +18,10 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     // Convert destination objects to strings for API
     // Prefer numeric destination IDs for backend aggregation; fallback to address if id missing
     const destinationStrings = selectedDestinations.map(dest => {
-      if (typeof dest === 'string') return dest; // legacy string
-      if (dest && dest.id != null) return String(dest.id); // numeric id
-      return dest?.address; // fallback
+      if (typeof dest === 'number') return String(dest);       // numeric id
+      if (typeof dest === 'string') return dest;               // already string id/address
+      if (dest && dest.id != null) return String(dest.id);     // object with id
+      return dest?.address;                                    // fallback address
     }).filter(Boolean);
     
     // Normalize protocols to a stable, sorted array for equality checks/fetching
@@ -28,8 +30,8 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
 
     const params = {
       destinations: destinationStrings,
-      start_date: dateRange.start?.toISOString(),
-      end_date: dateRange.end?.toISOString(),
+      start_date: dateRange.start ? toLondonISO(dateRange.start) : undefined,
+      end_date: dateRange.end ? toLondonISO(dateRange.end) : undefined,
       selectedProtocols: protoList
     };
     
@@ -60,8 +62,8 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
 
       // Decide mode
       const destCount = Array.isArray(fetchParams.destinations) ? fetchParams.destinations.length : 0;
-      const startMs = fetchParams.start_date ? new Date(fetchParams.start_date).getTime() : 0;
-      const endMs = fetchParams.end_date ? new Date(fetchParams.end_date).getTime() : 0;
+  const startMs = fetchParams.start_date ? new Date(fetchParams.start_date).getTime() : 0;
+  const endMs = fetchParams.end_date ? new Date(fetchParams.end_date).getTime() : 0;
       const days = startMs && endMs ? Math.max(0, (endMs - startMs) / (24 * 60 * 60 * 1000)) : 0;
       const resolvedMode = dataMode === 'auto'
         ? (destCount > 20 || days > 14 ? 'aggregated' : 'per-run')
@@ -146,8 +148,8 @@ export async function fetchPerRunNetworkData(selectedDestinations, dateRange, se
   }).filter(Boolean);
   const params = {
     destinations: destinationStrings,
-    start_date: dateRange.start?.toISOString(),
-    end_date: dateRange.end?.toISOString()
+  start_date: dateRange.start ? toLondonISO(dateRange.start) : undefined,
+  end_date: dateRange.end ? toLondonISO(dateRange.end) : undefined
   };
   const opts = {
     selectedProtocols: Array.isArray(selectedProtocols) ? selectedProtocols : [],

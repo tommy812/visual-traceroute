@@ -106,7 +106,7 @@ const ChartsApp = React.memo(({onGoLanding}) => {
   // Data mode: keep 'auto' (hook decides per-run vs aggregated by range/destination size)
   const dataMode = 'auto';
   const { pathData, loading, error } = useNetworkData(
-    selectedDestinationAddresses,
+    selectedDestinationIds,
     dateRange,
     filters.selectedProtocols,
     dataMode
@@ -239,7 +239,35 @@ const ChartsApp = React.memo(({onGoLanding}) => {
       {/* Right Side - Graph */}
       <div style={{ flex: "1", display: "flex", flexDirection: "column", backgroundColor: "#fff", position: "relative" }}>
         {selectedDestinationAddresses.length === 0 ? (
-          <div> {/* keep your current empty-state JSX */} </div>
+          <div style={{
+            flex: 1,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'linear-gradient(180deg, #ffffff 0%, #f7fbff 100%)'
+          }}>
+            <div style={{
+              textAlign: 'center',
+              background: '#fff',
+              border: '1px solid #e3e7ee',
+              borderRadius: 12,
+              padding: '28px 32px',
+              maxWidth: 520,
+              boxShadow: '0 12px 28px rgba(0,0,0,0.08)'
+            }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🧭</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: '#0d47a1', marginBottom: 6 }}>
+                Select destinations to visualize paths
+              </div>
+              <div style={{ fontSize: 13, color: '#455a64', marginBottom: 18 }}>
+                Use the Destinations panel on the left to pick one or more targets. You can search, expand domains, or select all.
+              </div>
+              
+              <div style={{ fontSize: 11, color: '#78909c', marginTop: 12 }}>
+                Available: {availableDestinations.length} destinations • Tip: use Quick Access to change the time range
+              </div>
+            </div>
+          </div>
         ) : (
           <div style={{ flex: "1", position: "relative" }}>
             <NetworkGraph

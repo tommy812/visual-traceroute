@@ -17,7 +17,7 @@ export function buildVisOptions(layoutOptimization, graph) {
     },
     configure: { enabled: false },
     layout: { improvedLayout: true },
-    physics: { enabled: false }
+    physics: { enabled: true }
   };
 
   switch (layoutOptimization) {

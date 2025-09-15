@@ -60,11 +60,21 @@ class DataTransformer {
 
     return templatePath.map((templateHop, hopIndex) => {
       const allRtts = [];
+      const allAvgRtts = [];
+      const allLoss = [];
       const asnCounts = new Map();
       pathGroup.forEach(p => {
         const hop = p.path[hopIndex];
         if (hop && Array.isArray(hop.rtt_ms)) {
           allRtts.push(...hop.rtt_ms);
+        }
+        if (hop && hop.avg_rtt_ms != null) {
+          const v = Number(hop.avg_rtt_ms);
+          if (Number.isFinite(v)) allAvgRtts.push(v);
+        }
+        if (hop && hop.loss_pct != null) {
+          const v = Number(hop.loss_pct);
+          if (Number.isFinite(v)) allLoss.push(v);
         }
         if (hop && hop.asn != null) {
           const key = String(hop.asn);
@@ -86,11 +96,20 @@ class DataTransformer {
         if (!Number.isNaN(n)) commonAsn = n;
       }
 
+      const avg_rtt_ms = allAvgRtts.length
+        ? (allAvgRtts.reduce((s, v) => s + v, 0) / allAvgRtts.length)
+        : (allRtts.length ? (allRtts.reduce((s, v) => s + v, 0) / allRtts.length) : null);
+      const loss_pct = allLoss.length
+        ? (allLoss.reduce((s, v) => s + v, 0) / allLoss.length)
+        : null;
+
       return {
         hop_number: templateHop.hop_number,
         ip: templateHop.ip,
         hostname: templateHop.hostname,
         rtt_ms: allRtts.length > 0 ? allRtts : (templateHop.rtt_ms || []),
+        avg_rtt_ms: avg_rtt_ms,
+        loss_pct: loss_pct,
         is_timeout: templateHop.is_timeout,
         // preserve hop protocol so frontend can match by hop-level protocol
         protocol: templateHop.protocol ?? null,
@@ -186,6 +205,8 @@ class DataTransformer {
       ip: hop.ip || null,
       hostname: hop.hostname,
       rtt_ms: this.convertRttToArray(hop.rtt1, hop.rtt2, hop.rtt3),
+      avg_rtt_ms: (hop.avg_rtt_ms != null ? Number(hop.avg_rtt_ms) : null),
+      loss_pct: (hop.loss_pct != null ? Number(hop.loss_pct) : null),
       is_timeout: !hop.ip || hop.ip === 'null' || hop.ip === null,
       // keep hop-level protocol aligned with run protocol
   protocol: pathProtocol,
@@ -200,12 +221,14 @@ class DataTransformer {
       count: 1,
       percent: 0,
       avg_rtt: avgRtt,
-      timeStamp: traceRun.timestamp || new Date().toISOString(),
+  timeStamp: traceRun.timestamp || require('../utils/dateUtils').toLondonISO(new Date()),
   protocol: pathProtocol,
   // Preserve the exact source run id so the drawer can fetch its raw output
   run_id: traceRun?.id ?? null,
   // Also keep destination address for reference (if joined)
-  destination_address: traceRun?.destinations?.address || null
+  destination_address: traceRun?.destinations?.address || null,
+  // NEW: carry destination domain name for UI (drawer/tooltip)
+  destination_domain: traceRun?.destinations?.domain?.name || null
     };
   }
 
@@ -224,18 +247,16 @@ class DataTransformer {
    * Calculate average RTT for a path
    */
   calculatePathAverageRtt(path) {
-    let totalRtt = 0;
-    let count = 0;
-
+    let total = 0; let count = 0;
     path.forEach(hop => {
-      if (hop.rtt_ms && hop.rtt_ms.length > 0) {
-        const hopAvg = hop.rtt_ms.reduce((sum, rtt) => sum + rtt, 0) / hop.rtt_ms.length;
-        totalRtt += hopAvg;
-        count++;
+      if (hop && hop.avg_rtt_ms != null && Number.isFinite(Number(hop.avg_rtt_ms))) {
+        total += Number(hop.avg_rtt_ms); count += 1;
+      } else if (Array.isArray(hop?.rtt_ms) && hop.rtt_ms.length) {
+        const hopAvg = hop.rtt_ms.reduce((s, v) => s + v, 0) / hop.rtt_ms.length;
+        total += hopAvg; count += 1;
       }
     });
-
-    return count > 0 ? Math.round((totalRtt / count) * 100) / 100 : 0;
+    return count > 0 ? Math.round((total / count) * 100) / 100 : 0;
   }
 
   /**
@@ -328,7 +349,7 @@ class DataTransformer {
           count: 0,
           percent: 0,
           avg_rtt: 0,
-          timeStamp: new Date().toISOString()
+          timeStamp: require('../utils/dateUtils').toLondonISO(new Date())
         },
         alternatives: []
       };
@@ -379,7 +400,7 @@ class DataTransformer {
         count: 0,
         percent: 0,
         avg_rtt: 0,
-        timeStamp: new Date().toISOString(),
+  timeStamp: require('../utils/dateUtils').toLondonISO(new Date()),
         protocol: null,
         timestamps: []
       };
@@ -398,8 +419,8 @@ class DataTransformer {
       .filter(t => !!t && !Number.isNaN(new Date(t)))
       .sort((a, b) => new Date(a) - new Date(b));
     const latestTimestamp = timestamps.length > 0
-      ? new Date(Math.max(...timestamps.map(t => new Date(t).valueOf()))).toISOString()
-      : new Date().toISOString();
+  ? require('../utils/dateUtils').toLondonISO(new Date(Math.max(...timestamps.map(t => new Date(t).valueOf()))))
+  : require('../utils/dateUtils').toLondonISO(new Date());
 
     // Aggregate hop data (average RTTs across same hops)
     const aggregatedPath = this.aggregateHopData(pathGroup);
@@ -436,7 +457,7 @@ class DataTransformer {
             count: 0,
             percent: 0,
             avg_rtt: 0,
-            timeStamp: new Date().toISOString()
+            timeStamp: require('../utils/dateUtils').toLondonISO(new Date())
           },
           alternatives: Array.isArray(destData.alternatives) ? destData.alternatives : [],
           total_traces: destData.total_traces || 0
@@ -503,12 +524,22 @@ class DataTransformer {
       // Apply RTT and usage filters at path level
       const filteredPaths = this.applyPathLevelFilters(paths, opts);
 
+      // In per-run mode, assign an equal share percentage to each individual run
+      const total = filteredPaths.length;
+      const perRunPaths = filteredPaths.map(p => ({
+        ...p,
+        count: 1,
+        percent: total > 0 ? Math.round((1 / total) * 1000) / 10 : 0
+      }));
+
       // Instead of picking primary/alternatives, treat each path as individual
       transformedData[destination] = {
         primary_path: null, // No primary when no aggregation
-        alternatives: filteredPaths, // All paths are alternatives
-        total_traces: filteredPaths.length,
-        protocol_groups: this.groupPathsByProtocol(filteredPaths)
+        alternatives: perRunPaths, // All paths are alternatives
+        total_traces: total,
+  protocol_groups: this.groupPathsByProtocol(perRunPaths),
+  // Mark payload as coming from per-run transformation so downstream logic can avoid de-duplication
+  per_run: true
       };
     });
 

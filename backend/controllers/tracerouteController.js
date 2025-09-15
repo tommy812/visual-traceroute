@@ -1,4 +1,15 @@
 const { supabase } = require('../config/database');
+const { DateTime } = require('luxon');
+const LONDON = 'Europe/London';
+
+function toLondonISO(d) {
+  return DateTime.fromJSDate(d).setZone(LONDON).toISO();
+}
+
+function fromISOToLondonJSDate(iso) {
+  if (!iso) return null;
+  return DateTime.fromISO(String(iso), { zone: LONDON }).toJSDate();
+}
 
 class TracerouteController {
   // Get all traceroute methods
@@ -254,7 +265,7 @@ class TracerouteController {
           domain:domain_id ( id, name )
         ),
         hops(
-          id, hop_number, ip, hostname, rtt1, rtt2, rtt3, asn, extra
+          id, hop_number, ip, hostname, rtt1, rtt2, rtt3, asn, extra, avg_rtt_ms, loss_pct
         )
       `;
 
@@ -476,15 +487,15 @@ class TracerouteController {
       function canonicalRange(startISO, endISO) {
         if (!startISO || !endISO) return { startKey: startISO, endKey: endISO };
         try {
-          const start = new Date(startISO);
-          const end = new Date(endISO);
-          const now = new Date();
+          const start = fromISOToLondonJSDate(startISO);
+          const end = fromISOToLondonJSDate(endISO);
+          const now = DateTime.now().setZone(LONDON).toJSDate();
           if (isNaN(start.getTime()) || isNaN(end.getTime())) return { startKey: startISO, endKey: endISO };
 
           // Helpers
-          const sod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0,0,0,0);
-          const eod = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23,59,59,999);
-          const iso = (d) => d.toISOString();
+          const sod = (d) => DateTime.fromJSDate(d, { zone: LONDON }).startOf('day').toJSDate();
+          const eod = (d) => DateTime.fromJSDate(d, { zone: LONDON }).endOf('day').toJSDate();
+          const iso = (d) => toLondonISO(d);
           const sameTs = (a,b)=>a.getTime()===b.getTime();
 
           // Current Day: start 00:00 today, end ~ now
@@ -494,28 +505,26 @@ class TracerouteController {
           }
 
           // Last Day: full previous day 00:00..23:59:59.999
-          const y = new Date(todaySOD.getTime() - 24*60*60*1000);
+          const y = DateTime.fromJSDate(todaySOD, { zone: LONDON }).minus({ days: 1 }).toJSDate();
             if (sameTs(start, sod(y)) && sameTs(end, eod(y))) {
               return { startKey: 'PERIOD_LAST_DAY_START', endKey: 'PERIOD_LAST_DAY_END' };
             }
 
           // Current Week: Monday 00:00 of this week -> now
-          const day = now.getDay();
-          const daysFromMon = day === 0 ? 6 : day - 1;
-          const monday = new Date(todaySOD.getTime() - daysFromMon*24*60*60*1000);
+          const monday = DateTime.fromJSDate(now, { zone: LONDON }).startOf('week').toJSDate();
           if (sameTs(start, sod(monday)) && end.getTime() <= now.getTime()+5*60*1000) {
             return { startKey: 'PERIOD_CURRENT_WEEK_START', endKey: 'PERIOD_CURRENT_WEEK_NOW' };
           }
 
           // Last Week: previous Monday..Sunday full week
-          const lastWeekMonday = new Date(monday.getTime() - 7*24*60*60*1000);
-          const lastWeekSunday = new Date(lastWeekMonday.getTime() + 6*24*60*60*1000);
+          const lastWeekMonday = DateTime.fromJSDate(monday, { zone: LONDON }).minus({ weeks: 1 }).toJSDate();
+          const lastWeekSunday = DateTime.fromJSDate(lastWeekMonday, { zone: LONDON }).endOf('week').toJSDate();
           if (sameTs(start, sod(lastWeekMonday)) && sameTs(end, eod(lastWeekSunday))) {
             return { startKey: 'PERIOD_LAST_WEEK_START', endKey: 'PERIOD_LAST_WEEK_END' };
           }
 
           // Last 30 Days: start = 30 days ago 00:00, end ~ now
-          const thirtyAgo = new Date(now.getTime() - 30*24*60*60*1000);
+          const thirtyAgo = DateTime.fromJSDate(now, { zone: LONDON }).minus({ days: 30 }).toJSDate();
           const thirtyAgoSOD = sod(thirtyAgo);
           if (sameTs(start, thirtyAgoSOD) && end.getTime() <= now.getTime()+5*60*1000) {
             return { startKey: 'PERIOD_LAST_30_DAYS_START', endKey: 'PERIOD_LAST_30_DAYS_NOW' };
@@ -820,10 +829,10 @@ class TracerouteController {
       const protoList = Array.isArray(protocols)
         ? protocols.map(p => String(p).trim().toUpperCase()).filter(Boolean)
         : (typeof protocols === 'string' && protocols.trim() ? protocols.split(',').map(p => p.trim().toUpperCase()).filter(Boolean) : null);
-      const end = new Date();
-      const start = new Date(end.getTime() - lookbackMinutes * 60 * 1000);
-      const start_iso = start.toISOString();
-      const end_iso = end.toISOString();
+  const end = DateTime.now().setZone(LONDON);
+  const start = end.minus({ minutes: lookbackMinutes });
+  const start_iso = start.toISO();
+  const end_iso = end.toISO();
   // Backend caching disabled: compute and return without storing
   const computed = await this._computeAggregated({ destIds, protoList, start_date: start_iso, end_date: end_iso, fastest, shortest });
   return { cached: false, count: Object.keys(computed).length };
@@ -861,9 +870,9 @@ class TracerouteController {
     let path = [];
     let runTimestamp = null;
   if (sampleRun) {
-      const { data: hopsData, error: hopsErr } = await supabase
-        .from('hops')
-  .select('hop_number, ip, hostname, rtt1, rtt2, rtt3, asn')
+  const { data: hopsData, error: hopsErr } = await supabase
+    .from('hops')
+  .select('hop_number, ip, hostname, rtt1, rtt2, rtt3, asn, avg_rtt_ms, loss_pct')
         .eq('trace_run_id', sampleRun)
         .order('hop_number');
       if (hopsErr) throw hopsErr;
@@ -884,6 +893,8 @@ class TracerouteController {
         ip: h.ip,
         hostname: h.hostname,
         rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
+        avg_rtt_ms: (h.avg_rtt_ms != null ? Number(h.avg_rtt_ms) : null),
+        loss_pct: (h.loss_pct != null ? Number(h.loss_pct) : null),
         is_timeout: !h.ip,
         protocol: row.protocol,
         asn: h.asn ?? null
@@ -897,7 +908,7 @@ class TracerouteController {
       count: row.run_count,
       percent,
       avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
-      timeStamp: runTimestamp || new Date().toISOString(),
+  timeStamp: runTimestamp || DateTime.now().setZone(LONDON).toISO(),
   protocol: row.protocol,
   // Surface the representative run id so the frontend can retrieve raw output if needed
   run_id: sampleRun || null

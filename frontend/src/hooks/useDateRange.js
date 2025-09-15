@@ -56,9 +56,8 @@ export const useDateRange = () => {
   }, [dateRange.start, dateRange.end]);
 
   const resetToCurrentDay = useCallback(() => {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    setDateRange({ start: startOfDay, end: now });
+    const rng = getCurrentDayRange();
+    setDateRange({ start: rng.start, end: rng.end });
   }, []);
 
   return {

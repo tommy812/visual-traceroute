@@ -161,7 +161,6 @@ const DestinationSelector = ({
   } = useMemo(() => {
     const q = (searchTerm || '').toLowerCase();
     const list = [];
-    const selectedIdsSet = new Set(selectedDestinationIds);
     const selectedDomainSet = new Set(selectedDomainNames);
     const perDomainIds = {};
     const perState = {};
@@ -206,7 +205,7 @@ const DestinationSelector = ({
  }, [filteredDestinations, onSelectAll]);
 
   return (
-    <div style={{ padding: "15px", borderBottom: "1px solid #dee2e6" }}>
+    <div id="destination-selector" style={{ padding: "15px", borderBottom: "1px solid #dee2e6" }}>
       <h3 style={{ margin: "0 0 10px 0", fontSize: "14px", color: "#333" }}>
         🎯 Destinations ({selectedDestinationAddresses.length}/{totalAvailableCount})
       </h3>

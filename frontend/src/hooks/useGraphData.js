@@ -53,8 +53,9 @@ export const useGraphData = (pathData, filters) => {
     // For each destination, collect ALL candidate paths, then filter, then compute primary dynamically
     const result = {};
 
-    Object.entries(pathData).forEach(([destination, destObj]) => {
+  Object.entries(pathData).forEach(([destination, destObj]) => {
       if (!destObj || typeof destObj !== 'object') return;
+      const isPerRun = destObj.per_run === true;
 
       // 1) Collect candidates: primary, fastest, shortest, alternatives, and from protocol_groups
       const candidates = [];
@@ -69,7 +70,9 @@ export const useGraphData = (pathData, filters) => {
       pushIf(destObj.shortest_path, 'shortest');
       if (Array.isArray(destObj.alternatives)) destObj.alternatives.forEach((a, i) => pushIf(a, `alt:${i}`));
 
-      if (destObj.protocol_groups && typeof destObj.protocol_groups === 'object') {
+      // When viewing per-run data, protocol_groups mirrors the same runs and would
+      // double-count candidates. Skip adding from protocol_groups in that case.
+      if (!isPerRun && destObj.protocol_groups && typeof destObj.protocol_groups === 'object') {
         Object.entries(destObj.protocol_groups).forEach(([protoName, grp]) => {
           if (!grp || typeof grp !== 'object') return;
           pushIf(grp.primary_path, `grp:${protoName}:primary`);
@@ -90,7 +93,19 @@ export const useGraphData = (pathData, filters) => {
         return true;
       });
 
-      // 2.5) Deduplicate by (protocol + hour bucket + path signature)
+  // 2.4) Per-run dedup: the same run can appear twice (direct alternative + protocol_groups)
+  // Use (run_id + timestamp) to ensure a single visual candidate per run
+  if (isPerRun) {
+      const byRun = new Map();
+      for (const p of filteredCandidates) {
+        const key = `${p?.run_id ?? ''}|${p?.timeStamp ?? ''}`;
+        if (!byRun.has(key)) byRun.set(key, p);
+      }
+      filteredCandidates = Array.from(byRun.values());
+  }
+
+  // 2.5) Aggregated-data dedup: by (protocol + hour bucket + path signature)
+  if (!isPerRun) {
       const protocolOf = (p) => {
         const pp = normalize(p?.protocol);
         if (pp) return pp;
@@ -169,6 +184,7 @@ export const useGraphData = (pathData, filters) => {
         if (!existing || isBetter(existing, p)) dedup.set(key, p);
       }
       filteredCandidates = Array.from(dedup.values());
+  }
 
   if (filteredCandidates.length === 0) return; // nothing to show for this destination
 
@@ -199,7 +215,53 @@ export const useGraphData = (pathData, filters) => {
       if (wantAlternative) {
         const altInstances = [];
         // Exclude primary by key to avoid reference mismatch
-        const keyOf = (p) => `${protocolOf(p)}|${hourBucketOf(p)}|${signatureOf(p)}`;
+        const keyOf = (p) => {
+          if (isPerRun) return `${p?.run_id ?? ''}|${p?.timeStamp ?? ''}`;
+          // fall back to signature-based key when not per-run
+          const protocolOf = (p2) => {
+            const pp = normalize(p2?.protocol);
+            if (pp) return pp;
+            const hops = Array.isArray(p2?.path) ? p2.path : [];
+            for (const h of hops) {
+              const hp = normalize(h?.protocol);
+              if (hp) return hp;
+            }
+            return 'UNKNOWN';
+          };
+          const signatureOf = (p2) => {
+            const hops = Array.isArray(p2?.path) ? p2.path : [];
+            return hops.map(h => (h && !h.is_timeout && h.ip) ? h.ip : 'timeout').join('>');
+          };
+          const hourBucketOf = (p2) => {
+            if (Array.isArray(p2?.timestamps) && p2.timestamps.length) {
+              let best = null;
+              for (const t of p2.timestamps) {
+                const d = new Date(t);
+                if (isNaN(d.getTime())) continue;
+                if (!best || d < best) best = d;
+              }
+              if (best) {
+                const y = best.getUTCFullYear();
+                const m = String(best.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(best.getUTCDate()).padStart(2, '0');
+                const h = String(best.getUTCHours()).padStart(2, '0');
+                return `${y}-${m}-${day}T${h}Z`;
+              }
+              return String(p2.timestamps[0]).slice(0, 13);
+            }
+            const ts = p2?.timeStamp || p2?.timestamp || null;
+            const d = new Date(ts);
+            if (!isNaN(d.getTime())) {
+              const y = d.getUTCFullYear();
+              const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+              const day = String(d.getUTCDate()).padStart(2, '0');
+              const h = String(d.getUTCHours()).padStart(2, '0');
+              return `${y}-${m}-${day}T${h}Z`;
+            }
+            return String(ts).slice(0, 13);
+          };
+          return `${protocolOf(p)}|${hourBucketOf(p)}|${signatureOf(p)}`;
+        };
         const primaryKey = primary ? keyOf(primary) : null;
         filteredCandidates.forEach(p => {
           if (primaryKey && keyOf(p) === primaryKey) return;

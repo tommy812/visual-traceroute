@@ -1,15 +1,15 @@
-/**
- * Format date for display
- */
+import { DateTime } from 'luxon';
+
+const LONDON = 'Europe/London';
+
+// Convert JS Date to Luxon in Europe/London
+const toLondon = (d) => DateTime.fromJSDate(d).setZone(LONDON);
+const nowLondon = () => DateTime.now().setZone(LONDON);
+
 export const formatDate = (date) => {
   if (!date) return '';
-  return new Intl.DateTimeFormat('en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit'
-  }).format(date);
+  const dt = date instanceof Date ? toLondon(date) : DateTime.fromISO(String(date), { zone: LONDON });
+  return dt.toFormat('dd LLL yyyy, HH:mm');
 };
 
 /**
@@ -28,32 +28,29 @@ export const formatDateRange = (start, end) => {
  * Get current day range (00:00 to current time)
  */
 export const getCurrentDayRange = () => {
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  return { start: startOfDay, end: now };
+  const now = nowLondon();
+  const start = now.startOf('day');
+  return { start: start.toJSDate(), end: now.toJSDate() };
 };
 
 /**
  * Get yesterday range (00:00 to 23:59)
  */
 export const getYesterdayRange = () => {
-  const now = new Date();
-  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-  const startOfDay = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0, 0);
-  const endOfDay = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59, 999);
-  return { start: startOfDay, end: endOfDay };
+  const y = nowLondon().minus({ days: 1 });
+  const start = y.startOf('day');
+  const end = y.endOf('day');
+  return { start: start.toJSDate(), end: end.toJSDate() };
 };
 
 /**
  * Get current week range (Monday 00:00 to current time)
  */
 export const getCurrentWeekRange = () => {
-  const now = new Date();
-  const currentDay = now.getDay();
-  const daysFromMonday = currentDay === 0 ? 6 : currentDay - 1;
-  const monday = new Date(now.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
-  const startOfMonday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0);
-  return { start: startOfMonday, end: now };
+  const now = nowLondon();
+  // Luxon weekNumber defaults to ISO weeks (Mon-Sun). Use startOf('week').
+  const start = now.startOf('week');
+  return { start: start.toJSDate(), end: now.toJSDate() };
 };
 
 /**
@@ -64,14 +61,10 @@ export const getCurrentWeekRange = () => {
  *  
  */
 export const getLastWeekRange = () => {
-  const now = new Date();
-  const currentDay = now.getDay();
-  const daysFromMonday = currentDay === 0 ? 6 : currentDay - 1;
-  const lastWeekMonday = new Date(now.getTime() - (daysFromMonday + 7) * 24 * 60 * 60 * 1000);
-  const lastWeekSunday = new Date(lastWeekMonday.getTime() + 6 * 24 * 60 * 60 * 1000);
-  const startOfMonday = new Date(lastWeekMonday.getFullYear(), lastWeekMonday.getMonth(), lastWeekMonday.getDate(), 0, 0, 0, 0);
-  const endOfSunday = new Date(lastWeekSunday.getFullYear(), lastWeekSunday.getMonth(), lastWeekSunday.getDate(), 23, 59, 59, 999);
-  return { start: startOfMonday, end: endOfSunday };
+  const now = nowLondon();
+  const lastWeekStart = now.startOf('week').minus({ weeks: 1 });
+  const lastWeekEnd = lastWeekStart.endOf('week');
+  return { start: lastWeekStart.toJSDate(), end: lastWeekEnd.toJSDate() };
 };
 
 /**
@@ -81,22 +74,22 @@ export const getLastWeekRange = () => {
  * @returns {Object} { start: Date, end: Date } 
  */
 export const getLast30DaysRange = () => {
-  const now = new Date();
-  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-  const startOfDay = new Date(thirtyDaysAgo.getFullYear(), thirtyDaysAgo.getMonth(), thirtyDaysAgo.getDate(), 0, 0, 0, 0);
-  return { start: startOfDay, end: now };
+  const now = nowLondon();
+  const start = now.minus({ days: 30 }).startOf('day');
+  return { start: start.toJSDate(), end: now.toJSDate() };
 };
 
 export function toLocalInputValue(date) {
   if (!date) return '';
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
-  return local.toISOString().slice(0, 16);
+  const dt = toLondon(date);
+  return dt.toFormat("yyyy-LL-dd'T'HH:mm");
 }
 
 export function fromLocalInputValue(value) {
   if (!value) return null;
-  const local = new Date(value);
-  return new Date(local.getTime() + local.getTimezoneOffset() * 60000);
+  // value like '2025-09-15T12:34'
+  const dt = DateTime.fromFormat(value, "yyyy-LL-dd'T'HH:mm", { zone: LONDON });
+  return dt.toJSDate();
 }
 
 // Tolerant period detection to avoid “double-click” selection
@@ -104,30 +97,36 @@ export function getPeriodFromRange(start, end, now = new Date(), tolMs = 60_000)
   if (!start || !end) return null;
 
   const isSameWithin = (a, b) => Math.abs(a - b) <= tolMs;
-  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-  const endOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+  const nowDt = nowLondon();
+  const startDt = toLondon(start);
+  const endDt = toLondon(end);
 
-  const startTs = start.getTime();
-  const endTs = end.getTime();
-  const nowTs = now.getTime();
+  if (startDt.equals(nowDt.startOf('day')) && isSameWithin(endDt.toMillis(), nowDt.toMillis())) return 'current-day';
 
-  const sodToday = startOfDay(now);
-  if (startTs === sodToday.getTime() && isSameWithin(endTs, nowTs)) return 'current-day';
+  const y = nowDt.minus({ days: 1 });
+  if (startDt.equals(y.startOf('day')) && endDt.equals(y.endOf('day'))) return 'last-day';
 
-  const y = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
-  if (startTs === startOfDay(y).getTime() && endTs === endOfDay(y).getTime()) return 'last-day';
+  const weekStart = nowDt.startOf('week');
+  if (startDt.equals(weekStart) && isSameWithin(endDt.toMillis(), nowDt.toMillis())) return 'current-week';
 
-  const day = now.getDay();
-  const daysFromMonday = day === 0 ? 6 : day - 1;
-  const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysFromMonday);
-  if (startTs === startOfDay(monday).getTime() && isSameWithin(endTs, nowTs)) return 'current-week';
+  const lastWeekStart = weekStart.minus({ weeks: 1 });
+  const lastWeekEnd = lastWeekStart.endOf('week');
+  if (startDt.equals(lastWeekStart) && endDt.equals(lastWeekEnd)) return 'last-week';
 
-  const lastWeekMonday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (daysFromMonday + 7));
-  const lastWeekSunday = new Date(lastWeekMonday.getFullYear(), lastWeekMonday.getMonth(), lastWeekMonday.getDate() + 6);
-  if (startTs === startOfDay(lastWeekMonday).getTime() && endTs === endOfDay(lastWeekSunday).getTime()) return 'last-week';
-
-  const thirtyDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 30);
-  if (startTs === startOfDay(thirtyDaysAgo).getTime() && isSameWithin(endTs, nowTs)) return 'last-30-days';
+  const thirtyStart = nowDt.minus({ days: 30 }).startOf('day');
+  if (startDt.equals(thirtyStart) && isSameWithin(endDt.toMillis(), nowDt.toMillis())) return 'last-30-days';
 
   return null;
+}
+
+// Serialize JS Date to ISO string representing the same wall time in Europe/London
+export function toLondonISO(date) {
+  if (!date) return '';
+  return toLondon(date).toISO();
+}
+
+// Parse ISO string and treat it in Europe/London
+export function fromLondonISO(iso) {
+  if (!iso) return null;
+  return DateTime.fromISO(String(iso), { zone: LONDON }).toJSDate();
 }
