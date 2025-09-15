@@ -5,7 +5,9 @@
 
 class IPGeoService {
   constructor() {
-    this.baseURL = 'http://ip-api.com/json';
+  // point to backend proxy which exposes HTTPS to the frontend
+  // In development, default to the backend on port 3001 if env var not provided
+  this.baseURL = process.env.REACT_APP_IPGEO_BACKEND || (process.env.NODE_ENV === 'development' ? 'http://localhost:3001/api/ipgeo' : '/api/ipgeo');
     this.cache = new Map(); // Cache responses to avoid repeated API calls
     this.requestQueue = new Map(); // Prevent duplicate concurrent requests
   }
@@ -70,63 +72,26 @@ class IPGeoService {
    * @returns {Promise<Object>} Raw API response
    */
   async fetchIPInfo(ip) {
-    const fields = [
-      'status',
-      'message',
-      'country',
-      'countryCode', 
-      'region',
-      'regionName',
-      'city',
-      'zip',
-      'lat',
-      'lon',
-      'timezone',
-      'isp',
-      'org',
-      'as',
-      'mobile',
-      'proxy',
-      'hosting',
-      'query'
-    ].join(',');
-
-    const url = `${this.baseURL}/${encodeURIComponent(ip)}?fields=${fields}`;
-    console.log('Fetching IP info from:', url);
+  const encodedIp = encodeURIComponent(ip);
+  const url = `${this.baseURL}/${encodedIp}`;
+  console.log('Fetching IP info from backend proxy:', url, 'original ip:', ip, 'encoded:', encodedIp);
 
     const response = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Accept': 'application/json',
-      }
-    });
-
-    console.log('Response status:', response.status);
-    console.log('Response headers:', {
-      'X-Rl': response.headers.get('X-Rl'),
-      'X-Ttl': response.headers.get('X-Ttl')
+      headers: { Accept: 'application/json' }
     });
 
     if (!response.ok) {
       if (response.status === 429) {
-        const retryAfter = response.headers.get('X-Ttl') || '60';
-        throw new Error(`Rate limited. Retry after ${retryAfter} seconds`);
+        throw new Error('Rate limited by backend');
       }
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
     const data = await response.json();
-    console.log('Raw API response:', data);
-    
-    // Check if the API returned an error status
-    if (data.status === 'fail') {
-      console.warn(`IP API returned failure for ${ip}:`, data.message);
-      return data; // Return the failed response so we can handle it properly
-    }
-    
-    // Add timestamp for cache management
-    data.fetchedAt = new Date().toISOString();
-    
+    console.log('Proxy API response:', data);
+
+    // Keep the same behavior: return raw data and let caller use formatIPInfo
     return data;
   }
 

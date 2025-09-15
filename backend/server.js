@@ -8,6 +8,8 @@ require('dotenv').config();
 
 const { testConnection } = require('./config/database');
 const tracerouteRoutes = require('./routes/traceroute');
+const ipgeoRoutes = require('./routes/ipgeo');
+const peeringdbRoutes = require('./routes/peeringdb');
 const { errorHandler, notFound } = require('./middleware/errorHandler');
 
 const app = express();
@@ -64,6 +66,8 @@ app.get('/health', (req, res) => {
 
 // API routes
 app.use('/api/traceroute', tracerouteRoutes);
+app.use('/api/ipgeo', ipgeoRoutes);
+app.use('/api/peeringdb', peeringdbRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

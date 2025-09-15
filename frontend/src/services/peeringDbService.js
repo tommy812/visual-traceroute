@@ -11,9 +11,12 @@ function parseAsnNumber(asnLike) {
 
 class PeeringDbService {
   constructor() {
-    this.netCache = new Map(); // Map<number, object|null>
-    this.inFlight = new Map(); // Map<number, Promise>
-    this.orgCache = new Map(); // Map<number, object|null>
+  // Backend proxy URL (defaults to local backend in development)
+  this.baseURL = process.env.REACT_APP_PDB_BACKEND || (process.env.NODE_ENV === 'development' ? 'http://localhost:3001/api/peeringdb' : '/api/peeringdb');
+
+  this.netCache = new Map(); // Map<number, object|null>
+  this.inFlight = new Map(); // Map<number, Promise>
+  this.orgCache = new Map(); // Map<number, object|null>
   }
 
   async getNetByAsn(asnInput) {
@@ -25,8 +28,9 @@ class PeeringDbService {
 
     const p = (async () => {
       try {
-        const res = await fetch(`${PDB_BASE}/net?asn=${asn}`, { method: 'GET' });
-        if (!res.ok) throw new Error(`PeeringDB HTTP ${res.status}`);
+        const url = `${this.baseURL}/net?asn=${asn}`;
+        const res = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(`PeeringDB proxy HTTP ${res.status}`);
         const json = await res.json();
         const net = Array.isArray(json?.data) && json.data.length > 0 ? json.data[0] : null;
         this.netCache.set(asn, net);

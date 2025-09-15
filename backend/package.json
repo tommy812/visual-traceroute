@@ -1,7 +1,7 @@
 {
   "name": "traceroute-backend",
   "version": "1.0.0",
-  "description": "Backend API for traceroute visualization",
+  "description": "Backend API for traceroute visualisation",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
