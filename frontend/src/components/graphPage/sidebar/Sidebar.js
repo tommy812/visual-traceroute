@@ -51,8 +51,10 @@ const Sidebar = ({
   apiHealthy,
   onOpenSettings,
   onGoLanding
+  , onImportGraph, onImportError, onClearImportedGraph, importedName
 }) => {
   const [open, setOpen] = useState(false);
+
 
   return (
     <>
@@ -106,6 +108,10 @@ const Sidebar = ({
         onClearAll={onClearAll}
         searchTerm={searchTerm}
         onSearchTermChange={onSearchTermChange}
+        onImportGraph={onImportGraph}
+        onImportError={onImportError}
+        onClearImportedGraph={onClearImportedGraph}
+        importedName={importedName}
       />
 
       {/* Time Range Selector */}

@@ -111,6 +111,29 @@ const ChartsApp = React.memo(({onGoLanding}) => {
     filters.selectedProtocols,
     dataMode
   );
+  // Imported graph data (optional)
+  const [importedPathData, setImportedPathData] = React.useState(null);
+  const [importedName, setImportedName] = React.useState(null);
+
+  // Expose lightweight handlers for Sidebar (avoids changing many components)
+  React.useEffect(() => {
+    try {
+      window.__rgv_onImportGraph = (data, name) => { setImportedPathData(data); setImportedName(name || null); };
+      window.__rgv_onImportError = (msg) => { console.error('Import error:', msg); alert('Import failed: ' + msg); };
+      window.__rgv_onClearImportedGraph = () => { setImportedPathData(null); setImportedName(null); };
+      window.__rgv_importedName = importedName;
+    } catch (e) {
+      // ignore (server-side rendering or restricted env)
+    }
+    return () => {
+      try {
+        delete window.__rgv_onImportGraph;
+        delete window.__rgv_onImportError;
+        delete window.__rgv_onClearImportedGraph;
+        delete window.__rgv_importedName;
+      } catch (e) {}
+    };
+  }, [importedName]);
   const { selectedHop, isDrawerOpen, handleHopSelect, closeDrawer } = useHopDrawer();
   const apiHealthy = !error;
 
@@ -234,11 +257,15 @@ const ChartsApp = React.memo(({onGoLanding}) => {
         apiHealthy={apiHealthy}
         onOpenSettings={handleOpenSettings}
         onGoLanding={onGoLanding}
+  onImportGraph={(data, name) => { setImportedPathData(data); setImportedName(name || null); }}
+  onImportError={(msg) => { console.error('Import error', msg); alert('Import failed: ' + msg); }}
+  onClearImportedGraph={() => { setImportedPathData(null); setImportedName(null); }}
+  importedName={importedName}
       />
 
       {/* Right Side - Graph */}
       <div style={{ flex: "1", display: "flex", flexDirection: "column", backgroundColor: "#fff", position: "relative" }}>
-        {selectedDestinationAddresses.length === 0 ? (
+        {(selectedDestinationAddresses.length === 0 && !importedPathData) ? (
           <div style={{
             flex: 1,
             display: 'flex',
@@ -271,7 +298,7 @@ const ChartsApp = React.memo(({onGoLanding}) => {
         ) : (
           <div style={{ flex: "1", position: "relative" }}>
             <NetworkGraph
-              pathData={pathData}
+              pathData={importedPathData || pathData}
               selectedDestinations={selectedDestinationAddresses}
               dateRange={dateRange}
               onHopSelect={handleHopSelect}
@@ -283,6 +310,7 @@ const ChartsApp = React.memo(({onGoLanding}) => {
               selectedProtocols={filters.selectedProtocols}
               hideReachedOnly={filters.hideReachedOnly}
               showReachedOnly={filters.showReachedOnly}
+              isImported={!!importedPathData}
             />
             <div style={{
               position: "absolute",

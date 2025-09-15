@@ -30,6 +30,8 @@ const NetworkGraph = React.memo(({
   selectedProtocols = [],
   hideReachedOnly = false,
   showReachedOnly = false
+  ,
+  isImported = false
 }) => {
   // Store network instance for zoom controls
   const [networkInstance, setNetworkInstance] = useState(null);
@@ -774,6 +776,82 @@ useEffect(() => {
 
   const { downloadAsPNG, downloadAsSVG } = useGraphExport({ networkInstance, graphContainerRef, graph });
 
+  // Export graph as JSON (nodes + edges + meta)
+  const exportGraphJSON = useCallback(() => {
+    try {
+      // Build a sanitized filename base from selected destinations or available pathData keys
+      const timestamp = new Date().toISOString().slice(0,19).replace(/:/g,'-');
+      let titleBase = 'network';
+      try {
+        if (Array.isArray(normalizedDestinations) && normalizedDestinations.length === 1 && normalizedDestinations[0]) {
+          titleBase = String(normalizedDestinations[0]);
+        } else if (Array.isArray(normalizedDestinations) && normalizedDestinations.length > 1) {
+          titleBase = `multi-${normalizedDestinations.length}`;
+        } else if (effectivePathData && typeof effectivePathData === 'object') {
+          const k = Object.keys(effectivePathData)[0];
+          if (k) titleBase = k;
+        }
+      } catch { /* ignore */ }
+      // sanitize filename (remove slashes and forbidden chars)
+      titleBase = titleBase.replace(/[\\/:*?"<>|\s]+/g, '-');
+
+      // Prefer exporting the original pathData mapping so the file is directly importable
+      if (effectivePathData && typeof effectivePathData === 'object' && !Array.isArray(effectivePathData)) {
+        const keys = Object.keys(effectivePathData);
+        if (keys.length === 0) { alert('No path data available to export'); return; }
+        // Quick validation: ensure exported object looks like expected importer shape
+        const sample = effectivePathData[keys[0]];
+        const looksLikePaths = sample && typeof sample === 'object' && (sample.primary_path || sample.alternatives || sample.total_traces != null);
+        if (!looksLikePaths) {
+          // If the structure isn't the expected one, fall back to exporting the visual graph snapshot
+          if (!graph) { alert('No importable path data available and no graph to export'); return; }
+          const fallback = {
+            generated_at: new Date().toISOString(),
+            note: 'Exported visual graph snapshot because original path data was not available in importable shape',
+            node_count: Array.isArray(graph.nodes) ? graph.nodes.length : 0,
+            edge_count: Array.isArray(graph.edges) ? graph.edges.length : 0,
+            graph
+          };
+          const blob = new Blob([JSON.stringify(fallback, null, 2)], { type: 'application/json' });
+          const link = document.createElement('a');
+          link.download = `${titleBase}-snapshot-${timestamp}.json`;
+          link.href = URL.createObjectURL(blob);
+          link.click();
+          URL.revokeObjectURL(link.href);
+          return;
+        }
+
+        // Export the destination->data mapping directly (this will be accepted by the importer)
+        const payload = effectivePathData;
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.download = `${titleBase}-Graph-${timestamp}.json`;
+        link.href = URL.createObjectURL(blob);
+        link.click();
+        URL.revokeObjectURL(link.href);
+        return;
+      }
+
+      // Fallback: export the visual graph snapshot as before
+      if (!graph) { alert('Graph not ready'); return; }
+      const payload = {
+        generated_at: new Date().toISOString(),
+        node_count: Array.isArray(graph.nodes) ? graph.nodes.length : 0,
+        edge_count: Array.isArray(graph.edges) ? graph.edges.length : 0,
+        graph
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.download = `${titleBase}-Graph-${timestamp}.json`;
+      link.href = URL.createObjectURL(blob);
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch (e) {
+      console.error('Export JSON failed', e);
+      alert('Export failed: ' + (e?.message || String(e)));
+    }
+  }, [graph, effectivePathData, normalizedDestinations]);
+
   
 
   return (
@@ -837,8 +915,9 @@ useEffect(() => {
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onFit={handleResetZoom}
-        onDownloadPNG={downloadAsPNG}
-        onDownloadSVG={downloadAsSVG} 
+  onDownloadPNG={downloadAsPNG}
+  onDownloadSVG={downloadAsSVG}
+  onExportJSON={!isImported ? exportGraphJSON : undefined}
         canDownload={!!networkInstance}
         // Aggregation controls
         aggregationMode={aggregationMode}

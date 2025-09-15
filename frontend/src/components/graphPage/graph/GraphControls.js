@@ -13,6 +13,7 @@ const GraphControls = ({
   // downloads
   onDownloadPNG,
   onDownloadSVG,
+  onExportJSON,
   canDownload = true,
 
   // aggregation controls
@@ -83,12 +84,20 @@ const GraphControls = ({
         </button>
 
         <button
-          onClick={() => onDownloadSVG && onDownloadSVG(true)}
+          onClick={() => onDownloadSVG && onDownloadSVG(false)}
           title="Download as SVG"
           className="zoom-button download-svg"
           disabled={!canDownload}
         >
           SVG
+        </button>
+        <button
+          onClick={() => onExportJSON && onExportJSON()}
+          title="Export graph JSON"
+          className="zoom-button download-json"
+          disabled={!canDownload}
+        >
+          JSON
         </button>
       </div>
 
