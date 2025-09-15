@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import './sidebar.css';
 import DestinationSelector from './forms/DestinationSelector';
 import AdvancedFilters from './forms/AdvancedFilters';
 import TimeRangeSelector from './forms/TimeRangeSelector';
@@ -51,30 +52,45 @@ const Sidebar = ({
   onOpenSettings,
   onGoLanding
 }) => {
+  const [open, setOpen] = useState(false);
+
   return (
-    <div style={{
-      width: '320px',
-      backgroundColor: '#f8f9fa',
-      borderRight: '1px solid #dee2e6',
-      display: 'flex',
-      flexDirection: 'column',
-      
-      height: '100vh'
-    }}>
-      <div style={{flex: 1, overflowY: 'auto' }}>
+    <>
+      {/* Mobile toggle button */}
+      <button
+        className="rgv-toggle-button"
+        aria-expanded={open}
+        aria-controls="rgv-sidebar"
+        onClick={() => setOpen(true)}
+        title="Open filters"
+      >
+        Filters
+      </button>
+
+      {/* Backdrop (mobile) */}
+      <div
+        className={`rgv-sidebar-backdrop ${open ? 'rgv-visible' : ''}`}
+        onClick={() => setOpen(false)}
+        aria-hidden={!open}
+      />
+
+      <div id="rgv-sidebar" className={`rgv-sidebar ${open ? 'rgv-open' : ''}`}>
+      <div className="rgv-scroll">
       {/* Header with title + API status */}
       <div style={{ padding: "20px 15px 15px 15px", backgroundColor: "#fff", borderBottom: "1px solid #dee2e6" }}>
-        <h1 style={{ margin: 0, fontSize: "18px", color: "#333" }}>🌐 Network Traceroute</h1>
+        {/* Mobile close row */}
+        <div className="rgv-mobile-close" style={{ display: open ? 'flex' : 'none' }}>
+          <button onClick={() => setOpen(false)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '14px' }} aria-label="Close filters">X</button>
+        </div>
+        <h1 style={{ margin: 0, fontSize: "18px", color: "#333" }}>
+          🌐 Network Traceroute</h1>
         <p style={{ margin: "6px 0 10px 0", color: "#666", fontSize: "12px" }}>Real-time network path analysis</p>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px' }}>
           <span style={{ color: apiHealthy ? '#4caf50' : '#dc3545' }}>{apiHealthy ? '🟢 API Connected' : '🔴 API Not Connected'}</span>
         
         </div>
       </div>
-
-   
-
-      
+  {/* (main header already rendered above; continue with selectors) */}
       {/* Destination Selector */}
       <DestinationSelector
         filteredDestinations={filteredDestinations}
@@ -130,6 +146,7 @@ const Sidebar = ({
       onGoLanding={onGoLanding}
     />
     </div>
+    </>
   );
 };
 

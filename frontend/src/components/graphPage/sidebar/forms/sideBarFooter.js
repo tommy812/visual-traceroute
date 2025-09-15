@@ -2,7 +2,7 @@ import React from 'react';
 
 const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
   return (
-    <div style={{
+    <div className="rgv-sidebar-footer" style={{
       borderTop: '1px solid #d0d7de',
       padding: '10px 12px',
       background: '#f8f9fa',
