@@ -9,11 +9,13 @@ export const useGraphData = (pathData, filters) => {
     showPrimaryOnly,
     selectedProtocols,
   hideReachedOnly,
-  showReachedOnly
+  showReachedOnly,
+  dateRange
   } = filters;
 
   const filteredData = useMemo(() => {
     if (!pathData || Object.keys(pathData).length === 0) return {};
+    
 
     // Helpers
     const parseNum = (v) => (v === '' || v === null || v === undefined ? null : parseFloat(v));
@@ -54,15 +56,49 @@ export const useGraphData = (pathData, filters) => {
     const result = {};
 
   Object.entries(pathData).forEach(([destination, destObj]) => {
-      if (!destObj || typeof destObj !== 'object') return;
+      if (!destObj || typeof destObj !== 'object') {
+        return;
+      }
       const isPerRun = destObj.per_run === true;
 
       // 1) Collect candidates: primary, fastest, shortest, alternatives, and from protocol_groups
       const candidates = [];
 
       const pushIf = (p, sourceTag) => {
-        if (!p || !Array.isArray(p.path)) return;
-        candidates.push({ ...p, _source: sourceTag });
+        if (!p) {
+          return;
+        }
+        
+        // Handle both raw data (path) and aggregated data (hops)
+        const pathArray = Array.isArray(p.path) ? p.path : (Array.isArray(p.hops) ? p.hops : null);
+        if (!pathArray) {
+          return;
+        }
+        
+        // Normalize the structure - ensure aggregated data has 'path' field for compatibility
+        // Add fallback values for missing fields in aggregated data
+        // Use a timestamp within the current date range for aggregated data
+        const getFallbackTimestamp = () => {
+          if (dateRange?.start && dateRange?.end) {
+            // Use the middle of the date range for aggregated data
+            const startMs = dateRange.start.getTime();
+            const endMs = dateRange.end.getTime();
+            const middleMs = startMs + (endMs - startMs) / 2;
+            return new Date(middleMs).toISOString();
+          }
+          return new Date().toISOString();
+        };
+        
+        const normalizedPath = {
+          ...p,
+          path: pathArray,
+          _source: sourceTag,
+          timeStamp: p.timeStamp || p.timestamp || getFallbackTimestamp(), // Fallback timestamp within date range
+          percent: p.percent !== null && p.percent !== undefined ? p.percent : 50, // Fallback percent
+          avg_rtt: p.avg_rtt !== null && p.avg_rtt !== undefined ? p.avg_rtt : 100 // Fallback RTT
+        };
+        
+        candidates.push(normalizedPath);
       };
 
       pushIf(destObj.primary_path, 'primary');
@@ -82,16 +118,30 @@ export const useGraphData = (pathData, filters) => {
         });
       }
 
+      
       // 2) Apply user filters (timeouts, protocol, RTT, usage)
       let filteredCandidates = candidates.filter(p => {
-        if (hideReachedOnly && isSuccessful(p)) return false;
-  if (showReachedOnly && !isSuccessful(p)) return false;
-        if (!matchesProtocol(p)) return false;
-        if (numericMinRTT !== null && typeof p.avg_rtt === 'number' && p.avg_rtt < numericMinRTT) return false;
-        if (numericMaxRTT !== null && typeof p.avg_rtt === 'number' && p.avg_rtt > numericMaxRTT) return false;
-        if (numericMinUsage !== null && typeof p.percent === 'number' && p.percent < numericMinUsage) return false;
+        if (hideReachedOnly && isSuccessful(p)) {
+          return false;
+        }
+        if (showReachedOnly && !isSuccessful(p)) {
+          return false;
+        }
+        if (!matchesProtocol(p)) {
+          return false;
+        }
+        if (numericMinRTT !== null && typeof p.avg_rtt === 'number' && p.avg_rtt < numericMinRTT) {
+          return false;
+        }
+        if (numericMaxRTT !== null && typeof p.avg_rtt === 'number' && p.avg_rtt > numericMaxRTT) {
+          return false;
+        }
+        if (numericMinUsage !== null && typeof p.percent === 'number' && p.percent < numericMinUsage) {
+          return false;
+        }
         return true;
       });
+      
 
   // 2.4) Per-run dedup: the same run can appear twice (direct alternative + protocol_groups)
   // Use (run_id + timestamp) to ensure a single visual candidate per run
@@ -106,6 +156,7 @@ export const useGraphData = (pathData, filters) => {
 
   // 2.5) Aggregated-data dedup: by (protocol + hour bucket + path signature)
   if (!isPerRun) {
+      
       const protocolOf = (p) => {
         const pp = normalize(p?.protocol);
         if (pp) return pp;
@@ -186,7 +237,9 @@ export const useGraphData = (pathData, filters) => {
       filteredCandidates = Array.from(dedup.values());
   }
 
-  if (filteredCandidates.length === 0) return; // nothing to show for this destination
+  if (filteredCandidates.length === 0) {
+    return; // nothing to show for this destination
+  }
 
   // 4) Do not expand by count; render one visual path per logical candidate
   let instanceCounter = 1;
@@ -268,9 +321,10 @@ export const useGraphData = (pathData, filters) => {
         return `${protocolOf(p)}|${hourBucketOf(p)}|${signatureOf(p)}`;
       };
 
-      // Map user selection to desired candidates. New selectors:
-      // MOST_USED, LEAST_USED, FASTEST, SLOWEST, FEWEST_HOPS, MOST_HOPS, ALTERNATIVE
-      const wantMostUsed = selectedPathTypes.includes('MOST_USED') || showPrimaryOnly;
+      // Map user selection to desired candidates. Handle both legacy and new selectors:
+      // Legacy: PRIMARY, ALTERNATIVE
+      // New: MOST_USED, LEAST_USED, FASTEST, SLOWEST, FEWEST_HOPS, MOST_HOPS, ALTERNATIVE
+      const wantMostUsed = selectedPathTypes.includes('MOST_USED') || selectedPathTypes.includes('PRIMARY') || showPrimaryOnly;
       const wantLeastUsed = selectedPathTypes.includes('LEAST_USED');
       const wantFastest = selectedPathTypes.includes('FASTEST');
       const wantSlowest = selectedPathTypes.includes('SLOWEST');
@@ -343,14 +397,16 @@ export const useGraphData = (pathData, filters) => {
         if (altInstances.length) out.alternatives = altInstances;
       }
 
+      
       if (out.primary_path || (out.alternatives && out.alternatives.length)) {
         out.total_traces = destObj.total_traces ?? null;
+        out.destination_id = destObj.destination_id; // Preserve destination_id in the result
         result[destination] = out;
       }
     });
 
     return result;
-  }, [pathData, minRTT, maxRTT, minUsagePercent, selectedPathTypes, showPrimaryOnly, selectedProtocols, hideReachedOnly, showReachedOnly]);
+  }, [pathData, minRTT, maxRTT, minUsagePercent, selectedPathTypes, showPrimaryOnly, selectedProtocols, hideReachedOnly, showReachedOnly, dateRange.start, dateRange.end]);
 
   return { filteredData };
 };

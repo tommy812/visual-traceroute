@@ -103,13 +103,11 @@ const ChartsApp = React.memo(({onGoLanding}) => {
   } = useDestinations();
 
 
-  // Data mode: keep 'auto' (hook decides per-run vs aggregated by range/destination size)
-  const dataMode = 'auto';
+  // Fetch network data (hook automatically decides per-run vs aggregated by range/destination size)
   const { pathData, loading, error } = useNetworkData(
     selectedDestinationIds,
     dateRange,
-    filters.selectedProtocols,
-    dataMode
+    filters.selectedProtocols
   );
   // Imported graph data (optional)
   const [importedPathData, setImportedPathData] = React.useState(null);

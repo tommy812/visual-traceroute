@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   getPeriodFromRange,
   getCurrentDayRange,
@@ -7,16 +7,15 @@ import {
   getLastWeekRange,
   getLast30DaysRange
 } from '../utils/dateUtils';
-import React from 'react';
 
 export const useDateRange = () => {
   // Initialize with current day
   const [dateRange, setDateRange] = useState(() => {
     return getCurrentDayRange();
   });
-  const [currentPeriod, setCurrentPeriod] = React.useState(null);
+  const [currentPeriod, setCurrentPeriod] = useState(null);
 
-  React.useEffect(() => {
+  useEffect(() => {
     setCurrentPeriod(getPeriodFromRange(dateRange.start, dateRange.end));
   }, [dateRange.start, dateRange.end]);
 

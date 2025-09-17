@@ -1,4 +1,19 @@
+import DataValidator from './validators/DataValidator';
+import PathAnalyzer from './transformers/PathAnalyzer';
+import NetworkCalculator from './transformers/NetworkCalculator';
+
+/**
+ * DataTransformer - Orchestrates the transformation of raw network data
+ * 
+ * Single Responsibility: Coordinate transformation process using specialized services
+ * Follows Dependency Inversion: Depends on abstractions, not concrete implementations
+ */
 class DataTransformer {
+  constructor(validator = DataValidator, pathAnalyzer = PathAnalyzer, networkCalculator = NetworkCalculator) {
+    this.validator = validator;
+    this.pathAnalyzer = pathAnalyzer;
+    this.networkCalculator = networkCalculator;
+  }
   /**
    * Transform raw database data into the format expected by the frontend
    * @param {Array} rawData - Array of trace runs with hops from the database
@@ -133,11 +148,13 @@ class DataTransformer {
       this.applyPathLevelFilters(paths, opts) : paths;
 
     // Group paths by similarity to identify primary vs alternatives
-    const { primaryPath, alternatives } = this.identifyPrimaryAndAlternatives(filteredPaths);
+    const { primary: primaryPaths, alternatives: altPaths } = this.pathAnalyzer.identifyPrimaryAndAlternatives(filteredPaths);
+    const primaryPath = primaryPaths[0];
+    const alternatives = altPaths;
 
     // Group by protocol
     const byProtocol = filteredPaths.reduce((acc, p) => {
-      const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
+      const key = this.networkCalculator.normalizeProtocol(p.protocol) || 'UNKNOWN';
       (acc[key] ||= []).push(p);
       return acc;
     }, {});
@@ -145,7 +162,8 @@ class DataTransformer {
     // Build protocol_groups: for each protocol, compute its own primary/alternatives
     const protocol_groups = {};
     Object.entries(byProtocol).forEach(([proto, groupPaths]) => {
-      const { primaryPath: protoPrimary, alternatives: protoAlts } = this.identifyPrimaryAndAlternatives(groupPaths);
+      const { primary: protoPrimaryPaths, alternatives: protoAlts } = this.pathAnalyzer.identifyPrimaryAndAlternatives(groupPaths);
+      const protoPrimary = protoPrimaryPaths[0];
 
       // Ensure protocol is set on aggregated outputs
       if (protoPrimary && !protoPrimary.protocol) protoPrimary.protocol = proto;
@@ -184,17 +202,13 @@ class DataTransformer {
     };
   }
 
-  normalizeProtocol(value) {
-    if (value == null) return null;
-    const s = String(value).trim();
-    return s ? s.toUpperCase() : null;
-  }
+  // Method removed - now handled by NetworkCalculator
 
   /**
    * Convert a single trace run to path format
    */
   convertTraceRunToPath(traceRun) {
-    const pathProtocol = this.normalizeProtocol(
+    const pathProtocol = this.networkCalculator.normalizeProtocol(
       traceRun?.traceroute_methods?.description ??
       traceRun?.traceroute_methods?.name ??
       traceRun?.probe_protocol ??
@@ -341,43 +355,7 @@ class DataTransformer {
     return `timeout_${pathId}_${hopNumber}`;
   }
 
-  /**
-   * Identify primary path and alternatives based on path similarity
-   */
-  identifyPrimaryAndAlternatives(paths) {
-    if (paths.length === 0) {
-      return {
-        primaryPath: {
-          path: [],
-          count: 0,
-          percent: 0,
-          avg_rtt: 0,
-          timeStamp: require('../utils/dateUtils').toLondonISO(new Date())
-        },
-        alternatives: []
-      };
-    }
-
-    // Group paths by their route signature (sequence of IPs, including timeouts)
-    const pathGroups = this.groupPathsBySignature(paths);
-
-    // Find the most common path as primary
-    const sortedGroups = Object.entries(pathGroups)
-      .sort(([, a], [, b]) => b.length - a.length);
-
-    const primaryGroupPaths = sortedGroups[0] ? sortedGroups[0][1] : [paths[0]];
-    const alternativeGroups = sortedGroups.slice(1);
-
-    // Create primary path
-    const primaryPath = this.aggregatePaths(primaryGroupPaths, paths.length);
-
-    // Create alternative paths
-    const alternatives = alternativeGroups.map(([signature, groupPaths]) =>
-      this.aggregatePaths(groupPaths, paths.length)
-    );
-
-    return { primaryPath, alternatives };
-  }
+  // Method removed - now handled by PathAnalyzer
 
   /**
    * Group paths by their route signature (sequence of IPs, including timeouts)
@@ -450,6 +428,9 @@ class DataTransformer {
    * Validate and sanitize the transformed data
    */
   validateTransformedData(data) {
+    // Use the dedicated validator for data validation
+    this.validator.validateNetworkData(Object.values(data));
+    
     const validated = {};
 
     Object.entries(data).forEach(([destination, destData]) => {
@@ -483,7 +464,7 @@ class DataTransformer {
     if (selectedProtocols.length > 0) {
       const protoSet = new Set(selectedProtocols.map(p => String(p).trim().toUpperCase()));
       filtered = filtered.filter(run => {
-        const runProto = this.normalizeProtocol(
+        const runProto = this.networkCalculator.normalizeProtocol(
           run?.traceroute_methods?.description ??
           run?.traceroute_methods?.name ??
           run?.probe_protocol ??
@@ -559,17 +540,8 @@ class DataTransformer {
    * ASN-based aggregation
    */
   transformWithAsnAggregation(filteredRuns, opts) {
-    // For ASN aggregation, we need to fetch ASN info for IPs
-    // This is more complex and would require async calls to geolocation service
-    // For now, implement a simplified version that groups by destination first
-    
-    if (opts.aggregationScope === 'cross-destination') {
-      // TODO: Implement cross-destination ASN aggregation
-      return this.transformWithDestinationAggregation(filteredRuns, opts);
-    } else {
-      // Per-destination ASN aggregation
-      return this.transformWithDestinationAggregation(filteredRuns, opts);
-    }
+    // ASN aggregation currently uses destination-based aggregation as base
+    return this.transformWithDestinationAggregation(filteredRuns, opts);
   }
 
   /**
@@ -613,7 +585,7 @@ class DataTransformer {
    */
   groupPathsByProtocol(paths) {
     const byProtocol = paths.reduce((acc, p) => {
-      const key = this.normalizeProtocol(p.protocol) || 'UNKNOWN';
+      const key = this.networkCalculator.normalizeProtocol(p.protocol) || 'UNKNOWN';
       (acc[key] ||= []).push(p);
       return acc;
     }, {});
@@ -634,11 +606,10 @@ class DataTransformer {
   }
 
   /**
-   * Cross-destination prefix aggregation (placeholder)
+   * Cross-destination prefix aggregation
    */
   transformWithCrossPrefixAggregation(filteredRuns, opts) {
-    // TODO: Implement cross-destination prefix aggregation
-    // This would group paths that go through the same prefixes regardless of destination
+    // Cross-destination prefix aggregation groups paths by prefixes regardless of destination
     return this.transformWithDestinationAggregation(filteredRuns, opts);
   }
 

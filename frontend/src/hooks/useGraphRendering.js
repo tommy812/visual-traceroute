@@ -85,11 +85,34 @@ export const useGraphRendering = (isFullscreen, dimensions) => {
   }, []);
 
   // Generate edge colors
-  const generateEdgeColor = useCallback((fromType, toType) => {
+  const generateEdgeColor = useCallback((fromType, toType, index = 0) => {
     if (fromType === 'timeout' || toType === 'timeout') {
       return '#f44336'; // Red for timeout connections
     }
-    return '#666666'; // Default gray
+    
+    // Generate varied colors for different edge types
+    if (fromType === 'asn' || toType === 'asn') {
+      return '#9C27B0'; // Purple for ASN connections
+    }
+    if (fromType === 'prefix' || toType === 'prefix') {
+      return '#FF9800'; // Orange for prefix connections  
+    }
+    
+    // Use golden ratio for diverse colors
+    const goldenRatio = 0.618033988749;
+    const hue = (index * goldenRatio * 360) % 360;
+    const saturation = 60;
+    const lightness = 45;
+    
+    // Convert HSL to hex
+    const l = lightness / 100;
+    const a = (saturation * Math.min(l, 1 - l)) / 100;
+    const f = (n) => {
+      const k = (n + hue / 30) % 12;
+      const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+      return Math.round(255 * color).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
   }, []);
 
   return {

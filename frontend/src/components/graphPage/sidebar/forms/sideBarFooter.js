@@ -29,6 +29,7 @@ const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
       >
         ⬅ Close Chart
       </button>
+      {/* Not needed for now  
       <button
         onClick={onOpenSettings}
         style={{
@@ -43,7 +44,7 @@ const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
         }}
       >
         ⚙️ Settings
-      </button>
+      </button> */}
       
     </div>
   );

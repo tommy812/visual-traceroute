@@ -15,14 +15,39 @@ export function useNetworkGraphModel({
 }) {
   const filteredData = useMemo(() => {
     if (!filteredByHook || !selectedDestinations || selectedDestinations.length === 0) return {};
+    
+    // Handle both raw data (match by destination key) and aggregated data (match by destination_id)
     const selectedSet = new Set(selectedDestinations);
+    
+    // Only create selectedIdSet from actual numeric IDs, not IPv6 addresses
+    const selectedIdSet = new Set(selectedDestinations.map(d => {
+      if (typeof d === 'number') return d;
+      if (typeof d === 'string') {
+        // Only try to parse if it looks like a number (not an IPv6 address)
+        if (/^\d+$/.test(d.trim())) {
+          const parsed = parseInt(d, 10);
+          return isNaN(parsed) ? null : parsed;
+        }
+        return null; // Skip IPv6 addresses
+      }
+      if (d && d.id != null) return d.id;
+      return null;
+    }).filter(id => id !== null));
+    
+    
     const hasWindow = !!(dateRange && dateRange.start && dateRange.end);
     const startMs = hasWindow ? dateRange.start.getTime() : null;
     const endMs = hasWindow ? dateRange.end.getTime() : null;
 
     const filtered = {};
     Object.entries(filteredByHook).forEach(([destination, data]) => {
-      if (!selectedSet.has(destination)) return;
+      // Try both matching strategies: by destination key (raw data) or by destination_id (aggregated data)
+      const destId = data.destination_id;
+      const matchesByKey = selectedSet.has(destination);
+      const matchesById = destId !== null && destId !== undefined && selectedIdSet.has(destId);
+      
+      
+      if (!matchesByKey && !matchesById) return;
 
       // Gather currently displayed candidates from hook output
       const basePrimary = data.primary_path ? [data.primary_path] : [];

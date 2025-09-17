@@ -1,10 +1,17 @@
-const { supabase } = require('../config/database');
 const { DateTime } = require('luxon');
+const { supabase } = require('../config/database');
+const Logger = require('../utils/logger');
+const DatabaseService = require('../services/DatabaseService');
+const PathBuilderService = require('../services/PathBuilderService');
+const RequestValidationService = require('../services/RequestValidationService');
+
 const LONDON = 'Europe/London';
 
-function toLondonISO(d) {
-  return DateTime.fromJSDate(d).setZone(LONDON).toISO();
-}
+/**
+ * TracerouteController - Handles HTTP requests for traceroute data
+ * Single Responsibility: HTTP request/response handling and coordination
+ * Follows Dependency Inversion: Depends on service abstractions
+ */
 
 function fromISOToLondonJSDate(iso) {
   if (!iso) return null;
@@ -15,22 +22,15 @@ class TracerouteController {
   // Get all traceroute methods
   async getMethods(req, res) {
     try {
-      const { data, error } = await supabase
-        .from('traceroute_methods')
-        .select('*')
-        .order('id');
-
-      if (error) {
-        throw error;
-      }
+      const data = await DatabaseService.getTracerouteMethods();
 
       res.json({
         success: true,
-        data: data || [],
-        count: data?.length || 0
+        data,
+        count: data.length
       });
     } catch (error) {
-      console.error('Error fetching traceroute methods:', error);
+      Logger.error('Error fetching traceroute methods:', error);
       res.status(500).json({
         success: false,
         error: 'Failed to fetch traceroute methods',
@@ -437,10 +437,12 @@ class TracerouteController {
 
   async getAggregatedPaths(req, res) {
     try {
-      console.time('getAggregatedPaths');
-      const { destinations, protocols, start_date, end_date, debug } = req.query;
-
-      // Robust boolean parsing (Boolean('false') === true bugfix)
+      Logger.time('TracerouteController.getAggregatedPaths');
+      
+      // Use validation service for parameter validation
+      const { destIds, startDate, endDate, protoList } = RequestValidationService.validateGetAggregatedPathsParams(req);
+      
+      // Parse additional optional parameters
       const truthy = v => {
         if (v === undefined || v === null) return false;
         const s = String(v).trim().toLowerCase();
@@ -449,39 +451,8 @@ class TracerouteController {
       };
       const fastest = truthy(req.query.fastest);
       const shortest = truthy(req.query.shortest);
-      const self = this; // defensive reference
 
-      // Accept both numeric destination IDs and address strings; resolve addresses to IDs
-      let destIds = null;
-      let unresolvedAddresses = [];
-      let rawDestinationTokens = [];
-      if (destinations) {
-        const rawItems = destinations.split(',');
-        // Drop malformed tokens like 'destinations=2491'
-        const items = rawItems.map(s => s.trim()).filter(t => t && !t.includes('='));
-        rawDestinationTokens = items;
-        const numericIds = items.filter(v => /^\d+$/.test(v)).map(v => parseInt(v, 10));
-        const addrCandidates = items.filter(v => !/^\d+$/.test(v));
-        // Filter out entries that look like invalid hostnames quickly (allow dots / letters / hyphens)
-        const addressItems = addrCandidates.filter(v => /[a-zA-Z]/.test(v));
-        unresolvedAddresses = addressItems;
-        let resolvedIds = [];
-        if (addressItems.length) {
-          const { data: destRows, error: destErr } = await supabase
-            .from('destinations')
-            .select('id,address')
-            .in('address', addressItems);
-          if (destErr) throw destErr;
-          resolvedIds = (destRows || []).map(r => r.id);
-          // Track which addresses failed to resolve
-          unresolvedAddresses = addressItems.filter(a => !destRows.find(r => r.address === a));
-        }
-        destIds = [...numericIds, ...resolvedIds];
-        if (!destIds.length) destIds = null; // if nothing resolved keep null
-      }
-      const protoList = protocols
-        ? protocols.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
-        : null;
+      // Note: destIds, protoList already validated and parsed by RequestValidationService
 
       // Normalize range for cache key to improve hits on repeated relative windows (e.g. "last day")
       function canonicalRange(startISO, endISO) {
@@ -535,30 +506,30 @@ class TracerouteController {
         return { startKey: startISO, endKey: endISO };
       }
 
-      const { startKey: normStart, endKey: normEnd } = canonicalRange(start_date, end_date);
+      // Note: Cache logic simplified - complex cache key normalization removed for clarity
 
-      // Distinguish cache key when destinations unresolved (avoid sharing 'ALL')
-      let cacheDestKeyList = destIds && destIds.length ? destIds : null;
-      if ((!cacheDestKeyList || !cacheDestKeyList.length) && rawDestinationTokens.length) {
-        // Use raw tokens as stand-ins (prefixed to avoid collision with numeric IDs)
-        cacheDestKeyList = rawDestinationTokens.map(t => /^(\d+)$/.test(t) ? parseInt(t,10) : `addr:${t}`);
-      }
-
-      // Always compute via RPC (no backend caching)
-      const { data: groups, error } = await supabase.rpc('get_aggregated_paths', {
-        p_destination_ids: destIds,
-        p_protocols: protoList,
-        p_start: start_date || null,
-        p_end: end_date || null
+      // Get aggregated paths from database service
+      const groups = await DatabaseService.getAggregatedPaths({
+        destination_ids: destIds,
+        start_date: startDate,
+        end_date: endDate,
+        protocols: protoList
       });
-      if (error) throw error;
-      const debugInfo = debug ? { input: { destinations, resolved_destination_ids: destIds, unresolved_addresses: unresolvedAddresses, protocols: protoList, start_date, end_date }, rpc_group_count: groups?.length || 0 } : undefined;
+      
+      const debugInfo = req.query.debug ? { 
+        input: { 
+          destinations: req.query.destinations, 
+          resolved_destination_ids: destIds, 
+          protocols: protoList, 
+          start_date: startDate, 
+          end_date: endDate 
+        }, 
+        rpc_group_count: groups?.length || 0 
+      } : undefined;
 
       // If empty, still return JSON (maybe filters too restrictive or underlying view has no data)
       if (!groups || groups.length === 0) {
-        if (process.env.CACHE_DEBUG === '1') {
-          console.warn('[getAggregatedPaths] RPC returned 0 rows for range', start_date, end_date, 'destIds', destIds, 'protoList', protoList);
-        }
+        Logger.debug('[getAggregatedPaths] RPC returned 0 rows for range', startDate, endDate, 'destIds', destIds, 'protoList', protoList);
         return res.json({ success: true, data: {}, debug: debugInfo });
       }
       // Organize by destination
@@ -572,15 +543,12 @@ class TracerouteController {
       const result = {};
       // Build destination id => address map for all destinations appearing in groups
       const allDestIds = Array.from(byDest.keys());
-      let destAddressMap = new Map();
-      if (allDestIds.length) {
-        const { data: destRows, error: destRowsErr } = await supabase
-          .from('destinations')
-          .select('id,address')
-          .in('id', allDestIds);
-        if (destRowsErr) throw destRowsErr;
-        destAddressMap = new Map((destRows || []).map(r => [r.id, r.address]));
-      }
+      const destinations = await DatabaseService.getDestinations();
+      const destAddressMap = new Map(
+        destinations
+          .filter(dest => allDestIds.includes(dest.id))
+          .map(dest => [dest.id, dest.address])
+      );
 
       for (const [destId, rows] of byDest.entries()) {
         // Group by protocol
@@ -625,16 +593,16 @@ class TracerouteController {
           const primary = list[0];
           const totalProtoRuns = list.reduce((s, r) => s + r.run_count, 0);
 
-          const protoPrimaryPath = await self.buildPathObject(primary, totalProtoRuns);
+          const protoPrimaryPath = await PathBuilderService.buildPathObject(primary);
           const protoAlternatives = await Promise.all(
-            list.slice(1).map(r => self.buildPathObject(r, totalProtoRuns))
+            list.slice(1).map(r => PathBuilderService.buildPathObject(r))
           );
 
           const fastestObj = (fastestPath && fastestPath.signature !== primary.signature)
-            ? await self.buildPathObject(fastestPath, totalProtoRuns)
+            ? await PathBuilderService.buildPathObject(fastestPath)
             : null;
           const shortestObj = (shortestPath && shortestPath.signature !== primary.signature && (!fastestObj || shortestPath.signature !== fastestPath.signature))
-            ? await self.buildPathObject(shortestPath, totalProtoRuns)
+            ? await PathBuilderService.buildPathObject(shortestPath)
             : null;
 
           protocol_groups[proto] = {
@@ -687,19 +655,19 @@ class TracerouteController {
           protocol_groups
         };
       }
-      console.timeEnd('getAggregatedPaths');
+      Logger.timeEnd('TracerouteController.getAggregatedPaths');
 
       return res.json({
         success: true,
         data: result,
         debug: debugInfo,
   cached: false,
-  normalized_range: { start: normStart, end: normEnd }
+  ormalized_range: { start: startDate, end: endDate }
       });
 
 
     } catch (e) {
-      console.error('getAggregatedPaths error:', e);
+      Logger.error('getAggregatedPaths error:', e);
       if (e && typeof e.message === 'string' && e.message.includes('invalid input syntax for type inet')) {
         return res.status(400).json({
           success: false,
@@ -775,12 +743,12 @@ class TracerouteController {
         })[0] : null;
         const primary = list[0];
         const totalProtoRuns = list.reduce((s, r) => s + r.run_count, 0);
-        const protoPrimaryPath = await this.buildPathObject(primary, totalProtoRuns);
-        const protoAlternatives = await Promise.all(list.slice(1).map(r => this.buildPathObject(r, totalProtoRuns)));
+        const protoPrimaryPath = await PathBuilderService.buildPathObject(primary);
+        const protoAlternatives = await Promise.all(list.slice(1).map(r => PathBuilderService.buildPathObject(r)));
         const fastestObj = (fastestPath && fastestPath.signature !== primary.signature)
-          ? await this.buildPathObject(fastestPath, totalProtoRuns) : null;
+          ? await PathBuilderService.buildPathObject(fastestPath) : null;
         const shortestObj = (shortestPath && shortestPath.signature !== primary.signature && (!fastestObj || shortestPath.signature !== fastestPath.signature))
-          ? await this.buildPathObject(shortestPath, totalProtoRuns) : null;
+          ? await PathBuilderService.buildPathObject(shortestPath) : null;
         protocol_groups[proto] = {
           primary_path: protoPrimaryPath,
           fastest_path: fastestObj,
@@ -863,57 +831,6 @@ class TracerouteController {
     }
   }
 
-  // Helper: convert aggregated row to frontend path object
-  async buildPathObject(row, totalRunsForPercent) {
-    if (!row) return null;
-    const sampleRun = row.sample_run_ids?.[0];
-    let path = [];
-    let runTimestamp = null;
-  if (sampleRun) {
-  const { data: hopsData, error: hopsErr } = await supabase
-    .from('hops')
-  .select('hop_number, ip, hostname, rtt1, rtt2, rtt3, asn, avg_rtt_ms, loss_pct')
-        .eq('trace_run_id', sampleRun)
-        .order('hop_number');
-      if (hopsErr) throw hopsErr;
-      // fetch representative run timestamp so frontend date-range filter keeps it
-      const { data: runMeta, error: runErr } = await supabase
-        .from('trace_runs')
-        .select('timestamp')
-        .eq('id', sampleRun)
-        .single();
-      if (runErr) {
-        // non-fatal; leave timestamp null
-        console.warn('Failed to fetch timestamp for run', sampleRun, runErr.message);
-      } else {
-        runTimestamp = runMeta?.timestamp || null;
-      }
-      path = (hopsData || []).map(h => ({
-        hop_number: h.hop_number,
-        ip: h.ip,
-        hostname: h.hostname,
-        rtt_ms: [h.rtt1, h.rtt2, h.rtt3].filter(v => v !== null && v !== undefined),
-        avg_rtt_ms: (h.avg_rtt_ms != null ? Number(h.avg_rtt_ms) : null),
-        loss_pct: (h.loss_pct != null ? Number(h.loss_pct) : null),
-        is_timeout: !h.ip,
-        protocol: row.protocol,
-        asn: h.asn ?? null
-      }));
-    }
-    const percent = totalRunsForPercent
-      ? +(row.run_count / totalRunsForPercent * 100).toFixed(2)
-      : 0;
-    return {
-      path,
-      count: row.run_count,
-      percent,
-      avg_rtt: Math.round(row.path_avg_rtt * 100) / 100,
-  timeStamp: runTimestamp || DateTime.now().setZone(LONDON).toISO(),
-  protocol: row.protocol,
-  // Surface the representative run id so the frontend can retrieve raw output if needed
-  run_id: sampleRun || null
-    };
-  }
 
 
 
@@ -921,22 +838,16 @@ class TracerouteController {
   // Health check for the controller
   async healthCheck(req, res) {
     try {
-      const { count, error } = await supabase
-        .from('traceroute_methods')
-        .select('*', { count: 'exact', head: true });
-
-      if (error) {
-        throw error;
-      }
+      const data = await DatabaseService.getTracerouteMethods();
 
       res.json({
         success: true,
         message: 'Traceroute controller is healthy',
         database_status: 'connected',
-        methods_count: count || 0
+        methods_count: data.length
       });
     } catch (error) {
-      console.error('Health check failed:', error);
+      Logger.error('Health check failed:', error);
       res.status(500).json({
         success: false,
         error: 'Health check failed',

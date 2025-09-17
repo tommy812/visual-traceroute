@@ -58,14 +58,9 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
       setLoading(true);
       setError(null);
 
-      // Decide mode
-      const destCount = Array.isArray(fetchParams.destinations) ? fetchParams.destinations.length : 0;
-  const startMs = fetchParams.start_date ? new Date(fetchParams.start_date).getTime() : 0;
-  const endMs = fetchParams.end_date ? new Date(fetchParams.end_date).getTime() : 0;
-      const days = startMs && endMs ? Math.max(0, (endMs - startMs) / (24 * 60 * 60 * 1000)) : 0;
-      const resolvedMode = dataMode === 'auto'
-        ? (destCount > 20 || days > 14 ? 'aggregated' : 'per-run')
-        : dataMode;
+      // Force per-run mode to use local aggregation instead of database aggregation
+      // The frontend DataTransformer handles aggregation much better than database
+      const resolvedMode = 'per-run';
 
       // 1) Cache-first according to mode
       let hadCached = false;
@@ -82,7 +77,7 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
         if (hadCached && reqId === requestIdRef.current) setPathData(cachedAgg);
       }
 
-      // 2) Fetch fresh for selected mode
+      // 2) Fetch fresh for selected mode  
       if (resolvedMode === 'per-run') {
         const freshPerRun = await dataRepository.fetchAndCacheNetworkData(
           fetchParams,
@@ -118,7 +113,7 @@ export const useNetworkData = (selectedDestinations, dateRange, selectedProtocol
     } finally {
       if (reqId === requestIdRef.current) setLoading(false);
     }
-  }, [fetchParams, shouldFetch, dataMode]);
+  }, [fetchParams, shouldFetch]);
 
   // Auto-fetch when parameters change
   useEffect(() => {
@@ -154,4 +149,5 @@ export async function fetchPerRunNetworkData(selectedDestinations, dateRange, se
     transformMode: 'per-run'
   };
   return await dataRepository.fetchAndCacheNetworkData(params, opts);
+  
 }

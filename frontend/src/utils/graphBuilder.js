@@ -1,7 +1,6 @@
 import dataTransformer from '../services/dataTransformer';
 import { generateDestinationColor } from './colorUtils';
 import { curvedForIndex } from './edges';
-// (lane-based layout utilities not used anymore here)
 
 // Map hierarchy → IPv6 mask
 const HIERARCHY_MASKS_V6 = {
@@ -589,15 +588,33 @@ export function buildGraph({
     } else if (type === 'ip') {
       const display = list[0]?.hostname || value;
       const isTerminal = list.some(d => d.destinationReached);
+      
+      // Get destination color for terminal hops that reached their destination
+      let backgroundColor = '#71c67fff';
+      let borderColor = isTerminal ? '#0c7237ff' : '#398f0aff';
+      
+      if (isTerminal) {
+        // Find the destination for this terminal hop
+        const terminalDetail = list.find(d => d.destinationReached);
+        if (terminalDetail?.destination) {
+          const destIndex = selectedDestinations.indexOf(terminalDetail.destination);
+          if (destIndex >= 0) {
+            // Use the same color generation as edges for consistency
+            backgroundColor = generateDestinationColor(destIndex);
+            borderColor = generateDestinationColor(destIndex, 80, 35); // Darker border
+          }
+        }
+      }
+      
       addNodeOnce(key, (id) => {
         nodeDetails.set(id, list);
   list.forEach(d => addPathMapping(id, d.pathId || `${d.destination}-${d.pathType}`));
         return {
           id,
           label: display,
-          // Disable vis-network native tooltip; we use custom overlays
+          // Disable vis-network native tooltip; use custom overlays
           title: undefined,
-          color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
+          color: { background: backgroundColor, border: borderColor },
           font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
           shape: isTerminal ? 'box' : 'dot',
           size: 18,
@@ -623,12 +640,30 @@ export function buildGraph({
         if (!isAggregatedPrefix) {
           // Treat as a normal hop using the standard green styling
           const isTerminal = list.some(d => d.destinationReached);
+          
+          // Get destination color for terminal hops that reached their destination
+          let backgroundColor = '#71c67fff';
+          let borderColor = isTerminal ? '#0c7237ff' : '#398f0aff';
+          
+          if (isTerminal) {
+            // Find the destination for this terminal hop
+            const terminalDetail = list.find(d => d.destinationReached);
+            if (terminalDetail?.destination) {
+              const destIndex = selectedDestinations.indexOf(terminalDetail.destination);
+              if (destIndex >= 0) {
+                // Use the same color generation as edges for consistency
+                backgroundColor = generateDestinationColor(destIndex);
+                borderColor = generateDestinationColor(destIndex, 80, 35); // Darker border
+              }
+            }
+          }
+          
           return {
             id,
             label: fallbackLabel,
             // Disable vis-network native tooltip; we use custom overlays
             title: undefined,
-            color: { background: '#71c67fff', border: isTerminal ? '#0c7237ff' : '#398f0aff' },
+            color: { background: backgroundColor, border: borderColor },
             font: { size: 12, color: '#333', strokeWidth: 2, strokeColor: '#fff' },
             shape: isTerminal ? 'box' : 'dot',
             size: 18,
@@ -642,13 +677,31 @@ export function buildGraph({
         }
         // Determine if this aggregated group includes the destination (any path reached dest in this group)
         const containsDestination = list.some(d => d.destinationReached && !d.is_timeout);
+        
+        // Get destination color for terminal aggregated prefixes
+        let backgroundColor = '#FF9800';
+        let borderColor = containsDestination ? '#0c7237ff' : '#D32F2F';
+        
+        if (containsDestination) {
+          // Find the destination for this terminal prefix
+          const terminalDetail = list.find(d => d.destinationReached && !d.is_timeout);
+          if (terminalDetail?.destination) {
+            const destIndex = selectedDestinations.indexOf(terminalDetail.destination);
+            if (destIndex >= 0) {
+              // Use a lighter version of destination color for aggregated prefixes
+              backgroundColor = generateDestinationColor(destIndex, 50, 70); // Lighter version
+              borderColor = generateDestinationColor(destIndex, 80, 35); // Darker border
+            }
+          }
+        }
+        
         // Aggregated prefix: render as a chip with count and chevron (expand affordance)
         return {
           id,
           label: `${value} (${uniqueIps.size}) ▸`,
           // Remove default vis tooltip; use custom overlay instead
           title: undefined,
-          color: { background: '#FF9800', border: containsDestination ? '#0c7237ff' : '#D32F2F' },
+          color: { background: backgroundColor, border: borderColor },
           font: { size: 11, color: '#333', strokeWidth: 2, strokeColor: '#fff', vadjust: 0 },
           shape: 'box',
           shapeProperties: { borderRadius: 10 },
@@ -674,12 +727,30 @@ export function buildGraph({
         const count = uniqueIps.size || 1;
         const label = `${value} (${count}) ▸`;
         const containsDestination = list.some(d => d.destinationReached && !d.is_timeout);
+        
+        // Get destination color for terminal ASN nodes
+        let backgroundColor = '#9C27B0';
+        let borderColor = containsDestination ? '#0c7237ff' : '#D32F2F';
+        
+        if (containsDestination) {
+          // Find the destination for this terminal ASN
+          const terminalDetail = list.find(d => d.destinationReached && !d.is_timeout);
+          if (terminalDetail?.destination) {
+            const destIndex = selectedDestinations.indexOf(terminalDetail.destination);
+            if (destIndex >= 0) {
+              // Use a lighter version of destination color for ASN nodes
+              backgroundColor = generateDestinationColor(destIndex, 60, 60); // Medium saturation/lightness
+              borderColor = generateDestinationColor(destIndex, 80, 35); // Darker border
+            }
+          }
+        }
+        
     return {
           id,
           label: `🏢 ${label}`,
       // Remove default vis tooltip; use custom overlay instead
       title: undefined,
-          color: { background: '#9C27B0', border: containsDestination ? '#0c7237ff' : '#D32F2F' },
+          color: { background: backgroundColor, border: borderColor },
           font: { size: 11, color: '#fff', strokeWidth: 2, strokeColor: '#333', vadjust: 0 },
           shape: 'box',
           shapeProperties: { borderRadius: 10 },

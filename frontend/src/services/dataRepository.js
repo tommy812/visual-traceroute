@@ -109,7 +109,8 @@ const dataRepository = {
           // Ensure minimal normalization so transformer can group by protocol/signature
           const normalized = allPaths.map(p => ({ ...p, protocol: p.protocol || (p.path && p.path[0] && p.path[0].protocol) || null }));
 
-          const { primaryPath, alternatives } = dataTransformer.identifyPrimaryAndAlternatives(normalized);
+          const { primary: primaryPaths, alternatives } = dataTransformer.pathAnalyzer.identifyPrimaryAndAlternatives(normalized);
+          const primaryPath = primaryPaths[0];
           const protocol_groups = dataTransformer.groupPathsByProtocol(normalized);
           const total_traces = Object.values(aggregated).reduce((s, d) => s + (d?.total_traces || 0), 0);
 

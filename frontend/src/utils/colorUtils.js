@@ -10,7 +10,9 @@ export function hslToHex(h, s, l) {
 }
 
 export function generateDestinationColor(index, saturation = 65, lightness = 55) {
-  const hue = (index * 137.5) % 360;
+  // Use golden ratio for better color distribution
+  const goldenRatio = 0.618033988749;
+  const hue = (index * goldenRatio * 360) % 360;
   return hslToHex(hue, saturation, lightness);
 }
 
@@ -28,7 +30,11 @@ export function colorForKey(key, saturation = 65, lightness = 55) {
 
 export const pathHighlightColors = [
   "#FF6B35", "#004E89", "#960000ff", "#7209B7", "#FF1654",
-  "#FF8500", "#0FA3B1", "#B5179E", "#F72585", "#4361EE"
+  "#FF8500", "#0FA3B1", "#B5179E", "#F72585", "#4361EE",
+  "#2E8B57", "#FF4500", "#4169E1", "#DC143C", "#FF1493",
+  "#32CD32", "#8A2BE2", "#FF6347", "#1E90FF", "#FFD700",
+  "#20B2AA", "#FF69B4", "#8B4513", "#FF00FF", "#00CED1",
+  "#9ACD32", "#FF7F50", "#6495ED", "#D2691E", "#BA55D3"
 ];
 
 export function adjustColorIntensity(hexColor, intensity = 0.6) {

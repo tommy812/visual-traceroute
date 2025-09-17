@@ -19,8 +19,6 @@ const AdvancedFilters = ({
   setSelectedPathTypes,
   showReachedOnly, 
   setShowReachedOnly,
-  showUnreachedOnly, 
-  setShowUnreachedOnly,
   hideReachedOnly,          
   setHideReachedOnly  
 

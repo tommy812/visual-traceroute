@@ -107,7 +107,8 @@ const NetworkGraph = React.memo(({
     showPrimaryOnly,
     selectedProtocols,
   hideReachedOnly,
-  showReachedOnly
+  showReachedOnly,
+  dateRange
   });
 
 
@@ -264,13 +265,14 @@ const NetworkGraph = React.memo(({
     return keyParts.join('|');
   }, [normalizedDestinations, dateRange, showPrimaryOnly, minRTT, maxRTT, minUsagePercent, selectedPathTypes, selectedProtocols, hideReachedOnly, showReachedOnly, isFullscreen, dimensions, expandedPrefixes, showPrefixAggregation, aggregationMode, aggregationScope, networkHierarchy, expandedAsnGroups, dataSig]);
 
-  // Heuristic: consider query heavy when many destinations or a long range
+  // Since we're using local aggregation, we can handle larger queries  
+  // Increase thresholds since frontend aggregation is more efficient
   const isHeavyQuery = useMemo(() => {
     const destCount = Array.isArray(normalizedDestinations) ? normalizedDestinations.length : 0;
     const startMs = dateRange?.start?.getTime?.() ?? 0;
     const endMs = dateRange?.end?.getTime?.() ?? 0;
     const days = startMs && endMs ? Math.max(0, (endMs - startMs) / (24 * 60 * 60 * 1000)) : 0;
-    return destCount > 20 || days > 14; // tweak thresholds as needed
+    return destCount > 100 || days > 60; // Much higher thresholds for local aggregation
   }, [normalizedDestinations, dateRange?.start, dateRange?.end]);
 
   // If heavy, auto-avoid 'Show All Paths' (per-run) to reduce payloads
@@ -432,13 +434,11 @@ const NetworkGraph = React.memo(({
     // Fetch geolocation data asynchronously if we have valid IPs
     if (uniqueIPs.length > 0) {
       try {
-        console.log('Fetching geolocation for IPs:', uniqueIPs);
         const ipInfoMap = new Map();
 
         // Fetch IP info for each unique IP (with caching)
         for (const ip of uniqueIPs) {
           const ipInfo = await ipGeoService.getIPInfo(ip);
-          console.log(`IP ${ip} geolocation result:`, ipInfo);
 
           if (ipInfo) {
             // Format the raw API response (getIPInfo returns raw data, even from cache)
@@ -461,7 +461,6 @@ const NetworkGraph = React.memo(({
           return hop;
         });
 
-        console.log('Updating hop data with geolocation info');
         onHopSelect(enhancedNodeData);
 
       } catch (error) {
