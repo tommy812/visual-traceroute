@@ -56,6 +56,9 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
         count: 1,
         minHop: Number.isFinite(hopNumber) ? hopNumber : null,
         maxHop: Number.isFinite(hopNumber) ? hopNumber : null,
+  // track timestamps: keep earliest seen timestamp and all timestamps list (if available)
+  firstSeen: it.timeStamp || it.timestamp || null,
+  timestamps: Array.isArray(it.timestamps) ? [...it.timestamps] : (it.timeStamp || it.timestamp ? [it.timeStamp || it.timestamp] : []),
         // NEW aggregations for badges/summary
         protoSet: new Set(it.protocol ? [String(it.protocol)] : []),
         asnSet: new Set((it.asn != null && String(it.asn).trim() !== '') ? [String(it.asn)] : []),
@@ -102,6 +105,19 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
         rec.rttMin = Math.min(rec.rttMin, Math.min(...it.rtt_ms));
         rec.rttMax = Math.max(rec.rttMax, Math.max(...it.rtt_ms));
       }
+      // aggregate timestamps
+      const t = it.timeStamp || it.timestamp || null;
+      if (t) {
+        if (!Array.isArray(rec.timestamps)) rec.timestamps = [];
+        rec.timestamps.push(t);
+        if (!rec.firstSeen) rec.firstSeen = t;
+        else {
+          const existing = new Date(rec.firstSeen);
+          const candidate = new Date(t);
+          if (!isNaN(candidate.getTime()) && isNaN(existing.getTime())) rec.firstSeen = t;
+          else if (!isNaN(candidate.getTime()) && !isNaN(existing.getTime()) && candidate < existing) rec.firstSeen = t;
+        }
+      }
       if (Number.isFinite(it.loss_pct)) {
         if (!Array.isArray(rec.lossSet)) rec.lossSet = [];
         rec.lossSet.push(Number(it.loss_pct));
@@ -109,6 +125,10 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
     }
   }
   const timeoutOnly = groups.size === 0;
+
+  // Detect shared-IP view: items covering multiple distinct destinations
+  const uniqueDestinations = new Set((Array.isArray(items) ? items : []).map(it => it?.destinationAddress || it?.destination || 'Unknown'));
+  const isSharedIPView = uniqueDestinations.size > 1;
 
   const headerText = `Paths at this hop: ${items.length}`;
   const S = {
@@ -230,6 +250,7 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
                     {r.count > 1 && <span style={S.count}>×{r.count}</span>}
                   </div>
                   {(r.protoSet && r.protoSet.size > 0) || (Array.isArray(r.lossSet) && r.lossSet.length > 0) ? (
+                    
                     <div style={S.badges}>
                       {r.protoSet && Array.from(r.protoSet).map((p) => (
                         <span key={`${dest}-${r.ip}-p-${p}`} style={S.protoBadge}>{p}</span>
@@ -262,6 +283,16 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
                         }).slice(0, 3);
                         const more = r.asnSet.size > 3 ? ` +${r.asnSet.size - 3}` : '';
                         parts.push(`ASN: ${labels.join(', ')}${more}`);
+                      }
+                      // show a representative seen timestamp (earliest) if present
+                      // but hide timestamps when the tooltip is for a shared-IP view
+                      if (!isSharedIPView && r.firstSeen) {
+                        try {
+                          const d = new Date(r.firstSeen);
+                          if (!isNaN(d.getTime())) {
+                            parts.push(`Seen: ${d.toLocaleString()}`);
+                          }
+                        } catch (e) { /* ignore bad dates */ }
                       }
                       return parts.length ? parts.join(' • ') : null;
                     })()}

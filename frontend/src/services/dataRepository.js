@@ -50,8 +50,8 @@ const dataRepository = {
     // Apply protocol filter (and other initial filters) before transforming
     const filteredRaw = dataTransformer.applyInitialFilters
       ? dataTransformer.applyInitialFilters(raw, {
-          selectedProtocols: Array.isArray(opts.selectedProtocols) ? opts.selectedProtocols : []
-        })
+        selectedProtocols: Array.isArray(opts.selectedProtocols) ? opts.selectedProtocols : []
+      })
       : raw;
     return transformWithMode(filteredRaw, opts);
   },
@@ -73,7 +73,7 @@ const dataRepository = {
     }
     return transformWithMode(rawRuns, opts);
   },
-  
+
   fetchAndCacheAggregated: async (params) => {
     const aggregated = await apiService.getAggregatedPaths({
       destinations: params.destinations,
@@ -81,6 +81,55 @@ const dataRepository = {
       start_date: params.start_date,
       end_date: params.end_date
     });
+    // If the caller requested multiple destinations, synthesize a combined
+    // aggregated view so the UI can show cross-destination aggregation.
+    try {
+      const destTokens = Array.isArray(params?.destinations) ? params.destinations : (typeof params?.destinations === 'string' && params.destinations ? params.destinations.split(',') : []);
+      if (destTokens.length > 1 && aggregated && typeof aggregated === 'object') {
+        const allPaths = [];
+        // Preserve origin destination for each path so cross-destination aggregation
+        // (ASN / prefix) downstream can detect distinct sources.
+        Object.entries(aggregated).forEach(([destKey, destObj]) => {
+          if (!destObj || typeof destObj !== 'object') return;
+          // Determine a sensible origin label: prefer explicit destination fields if present,
+          // otherwise fall back to the map key.
+          const origin = destObj.destination || destObj.destinationAddress || destKey;
+
+          if (destObj.primary_path) {
+            allPaths.push({ ...destObj.primary_path, destination: destObj.primary_path.destination || origin, _origin_destination: origin });
+          }
+          if (Array.isArray(destObj.alternatives)) {
+            destObj.alternatives.forEach(p => {
+              allPaths.push({ ...p, destination: p.destination || origin, _origin_destination: origin });
+            });
+          }
+        });
+
+        if (allPaths.length > 0) {
+          // Ensure minimal normalization so transformer can group by protocol/signature
+          const normalized = allPaths.map(p => ({ ...p, protocol: p.protocol || (p.path && p.path[0] && p.path[0].protocol) || null }));
+
+          const { primaryPath, alternatives } = dataTransformer.identifyPrimaryAndAlternatives(normalized);
+          const protocol_groups = dataTransformer.groupPathsByProtocol(normalized);
+          const total_traces = Object.values(aggregated).reduce((s, d) => s + (d?.total_traces || 0), 0);
+
+          const mergedKey = Array.isArray(params.destinations) ? params.destinations.join(',') : 'Multiple Destinations';
+          aggregated[mergedKey] = {
+            destination_id: null,
+            primary_path: primaryPath,
+            alternatives: alternatives,
+            total_traces,
+            protocol_groups,
+            // compatibility helpers
+            paths: primaryPath ? [primaryPath].concat(alternatives || []) : (alternatives || [])
+          };
+        }
+      }
+    } catch (e) {
+      // Non-fatal: keep original aggregated result if synthesis fails
+      console.warn('Failed to synthesize multi-destination aggregate:', e);
+    }
+
     return aggregated; // already aggregated shape
   },
 

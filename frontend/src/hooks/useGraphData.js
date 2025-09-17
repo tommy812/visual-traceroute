@@ -192,81 +192,154 @@ export const useGraphData = (pathData, filters) => {
   let instanceCounter = 1;
   const tagSingle = (p) => ({ ...p, _instanceId: String(instanceCounter++) });
 
-      // 3) Compute dynamic primary from de-duplicated candidates
-      const primary = filteredCandidates.reduce((best, p) => {
+      // 3) Compute candidate selectors on the frontend so they reflect current filters
+      const safeAvg = (p) => (typeof p?.avg_rtt === 'number' ? p.avg_rtt : Number.POSITIVE_INFINITY);
+      const safePercent = (p) => (typeof p?.percent === 'number' ? p.percent : (typeof p?.count === 'number' ? p.count : 0));
+      const hopCount = (p) => (Array.isArray(p?.path) ? p.path.length : (p?.hop_count ?? Infinity));
+
+      const mostUsed = filteredCandidates.reduce((best, p) => {
         if (!best) return p;
-        const bp = best?.percent ?? -1, pp = p?.percent ?? -1;
+        const bp = safePercent(best), pp = safePercent(p);
+        if (pp !== bp) return pp > bp ? p : best;
         const bc = best?.count ?? -1, pc = p?.count ?? -1;
-        const br = best?.avg_rtt ?? Number.POSITIVE_INFINITY, pr = p?.avg_rtt ?? Number.POSITIVE_INFINITY;
-        if (pp > bp) return p;
-        if (pp < bp) return best;
-        if (pc > bc) return p;
-        if (pc < bc) return best;
-        return pr < br ? p : best;
+        if (pc !== bc) return pc > bc ? p : best;
+        return safeAvg(p) < safeAvg(best) ? p : best;
       }, null);
 
-      // 5) Split into primary vs alternatives based on user selection
-      const wantPrimary = selectedPathTypes.includes('PRIMARY') || showPrimaryOnly;
-      const wantAlternative = selectedPathTypes.includes('ALTERNATIVE') && !showPrimaryOnly;
-      const out = {};
+      const fastest = filteredCandidates.reduce((best, p) => {
+        if (!best) return p;
+        const ba = safeAvg(best), pa = safeAvg(p);
+        if (pa !== ba) return pa < ba ? p : best;
+        return safePercent(p) > safePercent(best) ? p : best;
+      }, null);
 
-      if (wantPrimary && primary) out.primary_path = primary;
+      const shortest = filteredCandidates.reduce((best, p) => {
+        if (!best) return p;
+        const bl = hopCount(best), pl = hopCount(p);
+        if (pl !== bl) return pl < bl ? p : best;
+        return safeAvg(p) < safeAvg(best) ? p : best;
+      }, null);
 
-      if (wantAlternative) {
-        const altInstances = [];
-        // Exclude primary by key to avoid reference mismatch
-        const keyOf = (p) => {
-          if (isPerRun) return `${p?.run_id ?? ''}|${p?.timeStamp ?? ''}`;
-          // fall back to signature-based key when not per-run
-          const protocolOf = (p2) => {
-            const pp = normalize(p2?.protocol);
-            if (pp) return pp;
-            const hops = Array.isArray(p2?.path) ? p2.path : [];
-            for (const h of hops) {
-              const hp = normalize(h?.protocol);
-              if (hp) return hp;
+      // Helper to create stable keys for candidates (used for de-dup / equality)
+      const keyOf = (p) => {
+        if (isPerRun) return `${p?.run_id ?? ''}|${p?.timeStamp ?? ''}`;
+        const protocolOf = (p2) => {
+          const pp = normalize(p2?.protocol);
+          if (pp) return pp;
+          const hops = Array.isArray(p2?.path) ? p2.path : [];
+          for (const h of hops) {
+            const hp = normalize(h?.protocol);
+            if (hp) return hp;
+          }
+          return 'UNKNOWN';
+        };
+        const signatureOf = (p2) => {
+          const hops = Array.isArray(p2?.path) ? p2.path : [];
+          return hops.map(h => (h && !h.is_timeout && h.ip) ? h.ip : 'timeout').join('>');
+        };
+        const hourBucketOf = (p2) => {
+          if (Array.isArray(p2?.timestamps) && p2.timestamps.length) {
+            let best = null;
+            for (const t of p2.timestamps) {
+              const d = new Date(t);
+              if (isNaN(d.getTime())) continue;
+              if (!best || d < best) best = d;
             }
-            return 'UNKNOWN';
-          };
-          const signatureOf = (p2) => {
-            const hops = Array.isArray(p2?.path) ? p2.path : [];
-            return hops.map(h => (h && !h.is_timeout && h.ip) ? h.ip : 'timeout').join('>');
-          };
-          const hourBucketOf = (p2) => {
-            if (Array.isArray(p2?.timestamps) && p2.timestamps.length) {
-              let best = null;
-              for (const t of p2.timestamps) {
-                const d = new Date(t);
-                if (isNaN(d.getTime())) continue;
-                if (!best || d < best) best = d;
-              }
-              if (best) {
-                const y = best.getUTCFullYear();
-                const m = String(best.getUTCMonth() + 1).padStart(2, '0');
-                const day = String(best.getUTCDate()).padStart(2, '0');
-                const h = String(best.getUTCHours()).padStart(2, '0');
-                return `${y}-${m}-${day}T${h}Z`;
-              }
-              return String(p2.timestamps[0]).slice(0, 13);
-            }
-            const ts = p2?.timeStamp || p2?.timestamp || null;
-            const d = new Date(ts);
-            if (!isNaN(d.getTime())) {
-              const y = d.getUTCFullYear();
-              const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-              const day = String(d.getUTCDate()).padStart(2, '0');
-              const h = String(d.getUTCHours()).padStart(2, '0');
+            if (best) {
+              const y = best.getUTCFullYear();
+              const m = String(best.getUTCMonth() + 1).padStart(2, '0');
+              const day = String(best.getUTCDate()).padStart(2, '0');
+              const h = String(best.getUTCHours()).padStart(2, '0');
               return `${y}-${m}-${day}T${h}Z`;
             }
-            return String(ts).slice(0, 13);
-          };
-          return `${protocolOf(p)}|${hourBucketOf(p)}|${signatureOf(p)}`;
+            return String(p2.timestamps[0]).slice(0, 13);
+          }
+          const ts = p2?.timeStamp || p2?.timestamp || null;
+          const d = new Date(ts);
+          if (!isNaN(d.getTime())) {
+            const y = d.getUTCFullYear();
+            const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const day = String(d.getUTCDate()).padStart(2, '0');
+            const h = String(d.getUTCHours()).padStart(2, '0');
+            return `${y}-${m}-${day}T${h}Z`;
+          }
+          return String(ts).slice(0, 13);
         };
-        const primaryKey = primary ? keyOf(primary) : null;
-        filteredCandidates.forEach(p => {
-          if (primaryKey && keyOf(p) === primaryKey) return;
-          altInstances.push(tagSingle(p));
-        });
+        return `${protocolOf(p)}|${hourBucketOf(p)}|${signatureOf(p)}`;
+      };
+
+      // Map user selection to desired candidates. New selectors:
+      // MOST_USED, LEAST_USED, FASTEST, SLOWEST, FEWEST_HOPS, MOST_HOPS, ALTERNATIVE
+      const wantMostUsed = selectedPathTypes.includes('MOST_USED') || showPrimaryOnly;
+      const wantLeastUsed = selectedPathTypes.includes('LEAST_USED');
+      const wantFastest = selectedPathTypes.includes('FASTEST');
+      const wantSlowest = selectedPathTypes.includes('SLOWEST');
+      const wantFewest = selectedPathTypes.includes('FEWEST_HOPS');
+      const wantMostHops = selectedPathTypes.includes('MOST_HOPS');
+      const wantAlternative = selectedPathTypes.includes('ALTERNATIVE');
+
+      const out = {};
+
+      // If no path-type options are selected, show all filteredCandidates as alternatives (no single primary)
+      if (!selectedPathTypes || selectedPathTypes.length === 0) {
+        out.alternatives = filteredCandidates.map(tagSingle);
+      } else {
+        // Collect requested candidate(s). Some selectors produce single candidates (e.g. MOST_USED),
+        // include them (deduped) as primary if exactly one selector requested, otherwise place them in alternatives.
+        const requested = [];
+        if (wantMostUsed && mostUsed) requested.push(mostUsed);
+        if (wantLeastUsed && mostUsed) {
+          // least used: pick the candidate with smallest percent/count
+          const least = filteredCandidates.reduce((best, p) => {
+            if (!best) return p;
+            const bp = safePercent(best), pp = safePercent(p);
+            if (pp !== bp) return pp < bp ? p : best;
+            const bc = best?.count ?? -1, pc = p?.count ?? -1;
+            return pc < bc ? p : best;
+          }, null);
+          if (least) requested.push(least);
+        }
+        if (wantFastest && fastest) requested.push(fastest);
+        if (wantSlowest && fastest) {
+          // slowest: max avg_rtt
+          const slow = filteredCandidates.reduce((best, p) => {
+            if (!best) return p;
+            return safeAvg(p) > safeAvg(best) ? p : best;
+          }, null);
+          if (slow) requested.push(slow);
+        }
+        if (wantFewest && shortest) requested.push(shortest);
+        if (wantMostHops && shortest) {
+          const mosth = filteredCandidates.reduce((best, p) => {
+            if (!best) return p;
+            return hopCount(p) > hopCount(best) ? p : best;
+          }, null);
+          if (mosth) requested.push(mosth);
+        }
+
+        // Deduplicate requested candidates and decide primary vs alternatives.
+        const includedKeys = new Set();
+        const altInstances = [];
+        const keys = requested.map(keyOf).filter(Boolean);
+        // If exactly one unique requested candidate, make it the primary. Otherwise all requested go into alternatives.
+        const uniqueRequested = requested.filter((r, i) => keys.indexOf(keyOf(r)) === i);
+        if (uniqueRequested.length === 1) {
+          out.primary_path = tagSingle(uniqueRequested[0]);
+          includedKeys.add(keyOf(uniqueRequested[0]));
+        } else {
+          uniqueRequested.forEach(r => { includedKeys.add(keyOf(r)); altInstances.push(tagSingle(r)); });
+        }
+
+        // If ALTERNATIVE box checked, include all remaining filteredCandidates not yet included
+        if (wantAlternative) {
+          filteredCandidates.forEach(p => {
+            const k = keyOf(p);
+            if (!k || includedKeys.has(k)) return;
+            includedKeys.add(k);
+            altInstances.push(tagSingle(p));
+          });
+        }
+
         if (altInstances.length) out.alternatives = altInstances;
       }
 

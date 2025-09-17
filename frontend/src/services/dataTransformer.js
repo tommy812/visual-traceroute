@@ -174,8 +174,11 @@ class DataTransformer {
     const totalTraces = traceRuns.length;
 
     return {
-      primary_path: finalPrimary,
-      alternatives: finalAlternatives,
+  primary_path: finalPrimary,
+  alternatives: finalAlternatives,
+  // New shape compatibility: expose selected_path (same as primary) and paths (primary + alternatives)
+  selected_path: finalPrimary,
+  paths: finalAlternatives ? [finalPrimary].concat(finalAlternatives) : (finalPrimary ? [finalPrimary] : []),
       total_traces: totalTraces,
       protocol_groups
     };
@@ -460,6 +463,9 @@ class DataTransformer {
             timeStamp: require('../utils/dateUtils').toLondonISO(new Date())
           },
           alternatives: Array.isArray(destData.alternatives) ? destData.alternatives : [],
+          // new compatibility fields
+          selected_path: destData.selected_path || destData.primary_path || null,
+          paths: Array.isArray(destData.paths) ? destData.paths : (Array.isArray(destData.alternatives) ? destData.alternatives : (destData.primary_path ? [destData.primary_path] : [])),
           total_traces: destData.total_traces || 0
         };
       }
@@ -534,8 +540,11 @@ class DataTransformer {
 
       // Instead of picking primary/alternatives, treat each path as individual
       transformedData[destination] = {
-        primary_path: null, // No primary when no aggregation
-        alternatives: perRunPaths, // All paths are alternatives
+  primary_path: null, // No primary when no aggregation
+  alternatives: perRunPaths, // All paths are alternatives
+  // New shape: per-run data should expose paths and selected_path as null
+  selected_path: null,
+  paths: perRunPaths,
         total_traces: total,
   protocol_groups: this.groupPathsByProtocol(perRunPaths),
   // Mark payload as coming from per-run transformation so downstream logic can avoid de-duplication
@@ -613,8 +622,10 @@ class DataTransformer {
     Object.entries(byProtocol).forEach(([proto, groupPaths]) => {
       // In no-aggregation mode, don't pick primary/alternatives within protocol
       protocol_groups[proto] = {
-        primary_path: null,
-        alternatives: groupPaths,
+    primary_path: null,
+    alternatives: groupPaths,
+    selected_path: null,
+    paths: groupPaths,
         total_traces: groupPaths.length
       };
     });

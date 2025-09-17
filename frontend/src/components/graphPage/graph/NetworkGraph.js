@@ -165,6 +165,10 @@ const NetworkGraph = React.memo(({
     } else {
       if (mode === 'shared-ips') {
         setAggregationScope('cross-destination');
+      } else if (mode === 'asn' || mode === 'prefix') {
+        // For ASN/prefix aggregation modes, always use cross-destination scope
+        // to enable proper merging of paths through the same ASN/prefix
+        setAggregationScope('cross-destination');
       }
       setLayoutOptimization('minimal-crossings');
     }
@@ -176,6 +180,8 @@ const NetworkGraph = React.memo(({
     setNetworkHierarchy(hierarchy);
     // Reset expanded prefixes when changing hierarchy
     setExpandedPrefixes(new Set());
+    setExpandedAsnGroups(new Set());
+    
     // Auto-toggle prefix grouping based on hierarchy selection
     if (hierarchy === 'none' || hierarchy === 'asn') {
       setShowPrefixAggregation(false);
@@ -183,7 +189,17 @@ const NetworkGraph = React.memo(({
       // subnet / isp-pop / isp
       setShowPrefixAggregation(true);
     }
-  }, []);
+    
+    // For ASN/prefix hierarchies, ensure appropriate aggregation scope
+    // to allow proper cross-destination grouping for ASN/prefix aggregation
+    if (hierarchy === 'asn' || hierarchy === 'subnet' || hierarchy === 'isp-pop' || hierarchy === 'isp') {
+      if (aggregationMode === 'shared-ips') {
+        // For shared-ips mode with hierarchical views, use cross-destination scope
+        // to allow ASN/prefix nodes to merge across destinations properly
+        setAggregationScope('cross-destination');
+      }
+    }
+  }, [aggregationMode]);
 
   // Handle ASN group toggle
   const handleAsnToggle = useCallback((asnGroup) => {
@@ -263,6 +279,15 @@ const NetworkGraph = React.memo(({
       setAggregationMode('shared-ips');
     }
   }, [isHeavyQuery, aggregationMode]);
+
+  // Ensure proper aggregation scope for hierarchical views in heavy query mode
+  useEffect(() => {
+    if (isHeavyQuery && aggregationMode === 'shared-ips' && 
+        (networkHierarchy === 'asn' || networkHierarchy === 'subnet' || 
+         networkHierarchy === 'isp-pop' || networkHierarchy === 'isp')) {
+      setAggregationScope('cross-destination');
+    }
+  }, [isHeavyQuery, aggregationMode, networkHierarchy]);
 
 
   const { graph, nodeDetails, pathMapping } = useNetworkGraphModel({

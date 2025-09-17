@@ -7,10 +7,12 @@ export const useFilters = () => {
   const [minRTT, setMinRTT] = useState('');
   const [maxRTT, setMaxRTT] = useState('');
   const [minUsagePercent, setMinUsagePercent] = useState('');
-  const [selectedPathTypes, setSelectedPathTypes] = useState(['PRIMARY', 'ALTERNATIVE']);
+  // Path type options: MOST_USED (most common), FASTEST (lowest avg RTT), SHORTEST (fewest hops), ALTERNATIVE (other paths)
+  const [selectedPathTypes, setSelectedPathTypes] = useState([]);
   const [showReachedOnly, setShowReachedOnly] = useState(false);
   const [showUnreachedOnly, setShowUnreachedOnly] = useState(false);
   const [selectedProtocols, setSelectedProtocols] = useState([]);
+  // keep the external flag name for compatibility but treat it as "show most used only"
   const [showPrimaryOnly, setShowPrimaryOnly] = useState(false);
   const [hideReachedOnly, setHideReachedOnly] = useState(false); // NEW
 
@@ -21,7 +23,7 @@ export const useFilters = () => {
     setMinRTT('');
     setMaxRTT('');
     setMinUsagePercent('');
-    setSelectedPathTypes(['PRIMARY', 'ALTERNATIVE']);
+  setSelectedPathTypes([]);
     setSelectedProtocols([]);
     setShowPrimaryOnly(false);
     setHideReachedOnly(false);
@@ -35,7 +37,7 @@ export const useFilters = () => {
     minRTT,
     maxRTT,
     minUsagePercent,
-    selectedPathTypes,
+  selectedPathTypes,
     selectedProtocols,
     showPrimaryOnly,
   hideReachedOnly,

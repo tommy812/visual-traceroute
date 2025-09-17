@@ -111,27 +111,35 @@ const AdvancedFilters = ({
         <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
           Path Types:
         </label>
-        <div style={{ display: "flex", gap: "6px" }}>
-          {['PRIMARY', 'ALTERNATIVE'].map(pathType => (
-            <label key={pathType} style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "3px",
-              cursor: "pointer",
-              padding: "3px 6px",
-              borderRadius: "3px",
-              backgroundColor: selectedPathTypes.includes(pathType) ? "#e3f2fd" : "#fff",
-              border: "1px solid #ccc",
-              fontSize: "11px",
-              flex: "1"
-            }}>
+        <div style={{ display: "flex", gap: "6px", flexWrap: 'wrap' }}>
+          {['MOST_USED','LEAST_USED','FASTEST','SLOWEST','FEWEST_HOPS','MOST_HOPS'].map(pathType => (
+            <label key={pathType} title={pathType}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                cursor: "pointer",
+                padding: "6px 8px",
+                borderRadius: "4px",
+                backgroundColor: selectedPathTypes.includes(pathType) ? "#e3f2fd" : "#fff",
+                border: "1px solid #ccc",
+                fontSize: "11px",
+                flex: '1 1 120px'
+              }}>
               <input
                 type="checkbox"
                 checked={selectedPathTypes.includes(pathType)}
                 onChange={() => togglePathType(pathType)}
-                style={{ margin: 0, transform: "scale(0.8)" }}
+                style={{ margin: 0, transform: "scale(0.85)" }}
               />
-              {pathType}
+              <span>
+                {pathType === 'MOST_USED' ? 'Most used'
+                  : pathType === 'LEAST_USED' ? 'Least used'
+                  : pathType === 'FASTEST' ? 'Fastest (avg RTT)'
+                  : pathType === 'SLOWEST' ? 'Slowest (avg RTT)'
+                  : pathType === 'FEWEST_HOPS' ? 'Fewest hops'
+                  : 'Most hops'}
+              </span>
             </label>
           ))}
         </div>
@@ -219,21 +227,7 @@ const AdvancedFilters = ({
   
 
 
-      {/* TODO add show most used path, show fastest path */}
-      <div style={{ marginBottom: "10px" }}>
-        <label style={{ fontSize: "12px", fontWeight: "500", color: "#666", display: "block", marginBottom: "6px" }}>
-          Display Options:
-        </label>
-        <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", marginBottom: "6px" }}>
-          <input
-            type="checkbox"
-            checked={showPrimaryOnly}
-            onChange={(e) => setShowPrimaryOnly(e.target.checked)}
-            style={{ margin: 0, transform: "scale(0.8)" }}
-          />
-          <span style={{ fontSize: "11px" }}>Show Most Used Path</span>
-        </label>
-      </div>
+ 
 
       <button
         onClick={onReset}
