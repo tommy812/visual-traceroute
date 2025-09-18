@@ -82,7 +82,7 @@ class AppErrorBoundary extends React.Component {
 }
 
 // Optimized App component with React.memo
-const ChartsApp = React.memo(({onGoLanding}) => {
+const ChartsApp = React.memo(({onGoLanding, onShowDocs}) => {
   // Use custom hooks for state management
   const filters = useFilters();
   const { dateRange, handleQuickAccess, resetToCurrentDay, currentPeriod } = useDateRange();
@@ -255,6 +255,7 @@ const ChartsApp = React.memo(({onGoLanding}) => {
         apiHealthy={apiHealthy}
         onOpenSettings={handleOpenSettings}
         onGoLanding={onGoLanding}
+        onShowDocs={onShowDocs}
   onImportGraph={(data, name) => { setImportedPathData(data); setImportedName(name || null); }}
   onImportError={(msg) => { console.error('Import error', msg); alert('Import failed: ' + msg); }}
   onClearImportedGraph={() => { setImportedPathData(null); setImportedName(null); }}
@@ -366,7 +367,7 @@ function AppWithLanding() {
   if (mode === 'docs') {
     return <DocumentationPage onBack={showLanding} onEnter={enterCharts} />;
   }
-  return <ChartsApp onGoLanding={showLanding} />;
+  return <ChartsApp onGoLanding={showLanding} onShowDocs={showDocs} />;
 }
 
 // Export the App wrapped with error boundary

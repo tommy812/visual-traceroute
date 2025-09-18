@@ -1,21 +1,30 @@
+import pathSortingService from '../pathSortingService';
+
 /**
- * Responsible for analyzing network paths and identifying relationships
- * Single Responsibility: Path analysis and classification
+ * PathAnalyzer
+ * 
+ * Analyzes network paths to identify primary and alternative routes.
+ * Uses advanced sorting algorithms to determine optimal path ordering.
  */
+
 export class PathAnalyzer {
-  identifyPrimaryAndAlternatives(paths) {
+  constructor(sortingService = pathSortingService) {
+    this.sortingService = sortingService;
+  }
+
+  identifyPrimaryAndAlternatives(paths, config = {}) {
     if (!paths || paths.length === 0) {
       return { primary: [], alternatives: [] };
     }
 
-    // Sort paths by hop count (shorter paths are typically more direct/primary)
-    const sortedPaths = [...paths].sort((a, b) => {
-      const aHopCount = a.hops ? a.hops.length : 0;
-      const bHopCount = b.hops ? b.hops.length : 0;
-      return aHopCount - bHopCount;
+    // Use the advanced sorting service for optimal path ordering
+    const sortedPaths = this.sortingService.sortForGraphDisplay(paths, {
+      primarySort: 'advanced',
+      preserveProtocolGroups: false,
+      ...config // Pass through graph configuration for optimization
     });
 
-    // The shortest path is considered primary
+    // The first path (best by multiple criteria) is considered primary
     const primary = [sortedPaths[0]];
     const alternatives = sortedPaths.slice(1);
 

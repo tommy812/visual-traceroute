@@ -194,6 +194,21 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
         const color = pathHighlightColors[colorIdx % pathHighlightColors.length];
         colorIdx++;
         const [dest, type] = pathId.split('-', 2);
+        
+        // Get domain information from the edge
+        const edge = graph?.edges?.find(e => e.id === elementId);
+        const domains = edge?.pathDomains || [];
+        const protocols = edge?.protocols || [];
+        
+        // Debug logging to verify data
+        if (protocols.length > 0 || domains.length > 0) {
+          console.log(`Path highlighting for edge ${elementId}:`, {
+            protocols,
+            domains,
+            edge: edge ? { id: edge.id, protocols: edge.protocols, pathDomains: edge.pathDomains } : null
+          });
+        }
+        
         return {
           id: pathId,
           destination: dest || 'Unknown',
@@ -202,7 +217,9 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
           nodes,
           edges,
           highlightColor: color,
-          lineStyle: isPrimary ? 'solid' : 'dotted'
+          lineStyle: isPrimary ? 'solid' : 'dotted',
+          domains,
+          protocols
         };
       }).sort((a, b) => (a.isPrimary === b.isPrimary ? 0 : a.isPrimary ? -1 : 1));
       setHighlightedPaths(result);

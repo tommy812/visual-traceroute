@@ -1,6 +1,8 @@
 import dataTransformer from '../services/dataTransformer';
 import { generateDestinationColor } from './colorUtils';
 import { curvedForIndex } from './edges';
+import protocolFilteringService from '../services/protocolFilteringService';
+import pathSortingService from '../services/pathSortingService';
 
 // Map hierarchy → IPv6 mask
 const HIERARCHY_MASKS_V6 = {
@@ -10,15 +12,10 @@ const HIERARCHY_MASKS_V6 = {
 };
 
 /**
- * Build a deterministic graph with optional IPv6 hierarchy aggregation.
- * Supports:
- *  - Aggregation by shared IPs
- *  - Aggregation by hierarchical IPv6 prefixes (/64 subnet, /48 ISP-PoP, /32 ISP)
- *  - Per-destination vs cross-destination scopes
- *  - Correct handling of timeout nodes at the right hop
- *
- * Assumptions:
- *  - Only IPv6 is used (no IPv4 branches)
+ * Graph Builder
+ * 
+ * Builds network graphs from traceroute data with support for various aggregation modes.
+ * Handles IPv6 hierarchy aggregation, shared IP grouping, and timeout node placement.
  */
 export function buildGraph({
   filteredData,
@@ -134,9 +131,64 @@ export function buildGraph({
   Object.entries(filteredData).forEach(([destination, destData]) => {
     const destColor = generateDestinationColor(selectedDestinations.indexOf(destination));
 
+  // Function to aggregate consecutive timeout hops
+  const aggregateConsecutiveTimeouts = (hops) => {
+    const aggregatedHops = [];
+    let i = 0;
+    
+    while (i < hops.length) {
+      const hop = hops[i];
+      
+      // Check if this is a timeout hop
+      if (!hop || hop.is_timeout || !hop.ip) {
+        // Find consecutive timeout sequence
+        const timeoutSequence = [];
+        let j = i;
+        
+        while (j < hops.length) {
+          const currentHop = hops[j];
+          if (!currentHop || currentHop.is_timeout || !currentHop.ip) {
+            timeoutSequence.push(currentHop);
+            j++;
+          } else {
+            break;
+          }
+        }
+        
+        // Only aggregate if we have multiple consecutive timeouts
+        if (timeoutSequence.length > 1) {
+          // Create aggregated timeout hop that preserves all individual timeout information
+          const aggregatedTimeout = {
+            ...timeoutSequence[0], // Use first timeout as base
+            is_timeout: true,
+            is_aggregated_timeout: true,
+            timeout_count: timeoutSequence.length,
+            original_hop_numbers: timeoutSequence.map(h => h?.hop_number ?? (hops.indexOf(h) + 1)),
+            hop_number: timeoutSequence[0]?.hop_number ?? (i + 1), // Use first hop number
+            // Preserve all individual timeout data for tooltip
+            aggregated_timeouts: timeoutSequence.filter(h => h !== null && h !== undefined)
+          };
+          aggregatedHops.push(aggregatedTimeout);
+        } else {
+          // Single timeout, add as-is
+          aggregatedHops.push(timeoutSequence[0]);
+        }
+        
+        i = j; // Move to next non-timeout hop
+      } else {
+        // Regular hop, add as-is
+        aggregatedHops.push(hop);
+        i++;
+      }
+    }
+    
+    return aggregatedHops;
+  };
+
   const addPath = (pathObj, type, altIndex) => {
       if (!pathObj || !Array.isArray(pathObj.path)) return;
-      const hops = pathObj.path;
+      // Apply consecutive timeout aggregation
+      const hops = aggregateConsecutiveTimeouts(pathObj.path);
   const isSingleHopPath = Array.isArray(hops) && hops.length === 1;
 
   // Pre-compute collapsed step per hop for ASN aggregation:
@@ -151,7 +203,7 @@ export function buildGraph({
         for (let i = 0; i < hops.length; i++) {
           const h = hops[i];
           const hopIp = h?.ip;
-          const timeoutish = !h || h.is_timeout || !hopIp || !isIPv6(hopIp);
+          const timeoutish = !h || h.is_timeout || h.is_aggregated_timeout || !hopIp || !isIPv6(hopIp);
           if (timeoutish) {
             step += 1;
             asnStepByIdx[i] = step;
@@ -197,7 +249,15 @@ export function buildGraph({
         Object.defineProperty(pathObj, '_cachedPathId', { value: pathId, enumerable: false, configurable: true });
       }
 
-  pathDescriptors.push({ destination, destColor, pathId, hops, runId: pathObj?.run_id ?? null });
+  pathDescriptors.push({ 
+    destination, 
+    destColor, 
+    pathId, 
+    hops, 
+    runId: pathObj?.run_id ?? null,
+    protocol: pathObj?.protocol ?? null,
+    domain: filteredData[destination]?.domain?.name || null
+  });
   // (max hop no longer tracked)
 
   // Determine expected destination IP (from data or destination key if it's an IP)
@@ -234,7 +294,7 @@ export function buildGraph({
         for (let i = 0; i < hops.length; i++) {
           const h = hops[i];
           const ip = h?.ip;
-          const timeoutish = !h || h.is_timeout || !ip || !isIPv6(ip);
+          const timeoutish = !h || h.is_timeout || h.is_aggregated_timeout || !ip || !isIPv6(ip);
           if (timeoutish) {
             step += 1;
             prefixStepByIdx[i] = step;
@@ -270,7 +330,7 @@ export function buildGraph({
         let key;
         const aggregateTimeouts = (aggregationMode !== 'none') || (networkHierarchy !== 'none');
 
-        if (!hop || hop.is_timeout || !hop.ip) {
+        if (!hop || hop.is_timeout || hop.is_aggregated_timeout || !hop.ip) {
           // Timeout nodes handling
           if (asnEnabled && Array.isArray(asnStepByIdx) && asnStepByIdx[idx]) {
             // place timeout at the collapsed step to preserve sequence when ASN grouping is on
@@ -376,7 +436,7 @@ export function buildGraph({
         }
 
         if (!detailsByKey.has(key)) detailsByKey.set(key, []);
-        detailsByKey.get(key).push({
+        const hopDetail = {
           ip: hop?.ip ?? null,
           hostname: hop?.hostname ?? (hop?.ip ?? 'Timeout'),
           rtt_ms: hop?.rtt_ms ?? [],
@@ -403,19 +463,68 @@ export function buildGraph({
           trace_run_id: pathObj?.run_id ?? null,
           destinationAddress: destData?.destination || destination || null,
           destinationDomain: pathObj?.destination_domain || destData?.domain?.name || null
-        });
+        };
+
+        detailsByKey.get(key).push(hopDetail);
       });
     };
 
     if (destData?.primary_path) addPath(destData.primary_path, 'PRIMARY', 0);
     if (!showPrimaryOnly && Array.isArray(destData?.alternatives)) {
-      destData.alternatives.forEach((alt, i) => addPath(alt, 'ALTERNATIVE', i + 1));
+      // Sort alternatives using advanced optimization for the current graph configuration
+      const sortingConfig = {
+        aggregationMode,
+        aggregationScope,
+        networkHierarchy,
+        showPrimaryOnly,
+        destinationCount: selectedDestinations.length
+      };
+      
+      const sortedAlternatives = pathSortingService.sortForGraphDisplay(destData.alternatives, {
+        primarySort: 'advanced',
+        ...sortingConfig
+      });
+      
+      sortedAlternatives.forEach((alt, i) => addPath(alt, 'ALTERNATIVE', i + 1));
     }
   });
 
   // Source node removed: paths now start from the first hop present in data.
 
-  // Pass 1.5: Apply prefix aggregation if enabled (or hierarchy forces it)
+  // Pass 1.5: Apply protocol filtering detection per destination
+  const destinationGroups = new Map();
+  
+  // Group all hops by destination
+  detailsByKey.forEach((hopDataList, key) => {
+    if (hopDataList.length === 0) return;
+    
+    const destinationAddress = hopDataList[0]?.destinationAddress || hopDataList[0]?.destination;
+    if (!destinationAddress) return;
+
+    if (!destinationGroups.has(destinationAddress)) {
+      destinationGroups.set(destinationAddress, []);
+    }
+    destinationGroups.get(destinationAddress).push(...hopDataList);
+  });
+
+  // Analyze each destination for protocol filtering
+  destinationGroups.forEach((allHopsForDestination, destinationAddress) => {
+    // Analyze protocol filtering for this destination
+    const filteringResult = protocolFilteringService.detectEdgeFilteringForHop(allHopsForDestination, destinationAddress);
+    
+    // Apply filtering information to all hops for this destination
+    if (filteringResult.isEdgeFiltered) {
+      allHopsForDestination.forEach(hopData => {
+        if (hopData.protocol === filteringResult.filteredProtocol) {
+          hopData.isEdgeFiltered = true;
+          hopData.edgeFilteringMessage = filteringResult.message;
+          hopData.reachingProtocols = filteringResult.reachingProtocols;
+        }
+      });
+    }
+  });
+
+  // Pass 1.6: Apply prefix aggregation if enabled (or hierarchy forces it)
   let finalDetailsByKey = new Map(detailsByKey);
   // Only apply post-pass prefix aggregation when no explicit hierarchy is selected
   // and the user enabled prefix grouping.
@@ -568,18 +677,39 @@ export function buildGraph({
         const uniqueDestCount = new Set(list.map(d => d.destination).filter(Boolean)).size;
         const uniquePathCount = new Set(list.map(d => d.pathId).filter(Boolean)).size;
         const aggregated = uniqueDestCount > 1 || uniquePathCount > 1;
+        const isAggregatedTimeout = list.some(d => d.is_aggregated_timeout);
+        
+        // Calculate the actual count to display
+        let displayCount = 1;
+        let label = '⏱️';
+        
+        if (isAggregatedTimeout) {
+          // For aggregated timeouts, show the count of consecutive timeouts that were aggregated
+          const timeoutCount = list.find(d => d.is_aggregated_timeout)?.timeout_count || 1;
+          displayCount = timeoutCount;
+          if (timeoutCount > 1) {
+            label = `⏱️×${timeoutCount}`;
+          }
+        } else if (aggregated) {
+          // For non-aggregated timeouts shared across multiple paths, show the number of paths
+          displayCount = uniquePathCount || uniqueDestCount;
+          label = `⏱️×${displayCount}`;
+        }
+        
         return {
           id,
-          label: aggregated ? `⏱️×${uniqueDestCount || uniquePathCount}` : '⏱️',
+          label,
           // Disable vis-network native tooltip; we use custom overlays
           title: undefined,
           color: { background: '#F44336', border: '#D32F2F' },
-          font: { size: 12, color: '#FFF', strokeWidth: 2, strokeColor: '#fff' },
+          font: { size: 12, color: '#FFFFF', strokeWidth: 2, strokeColor: '#fff' },
           shape: 'dot',
           size: 16,
           nodeType: 'timeout',
           timeoutKey: key,
           level: hopNumber,
+          isAggregatedTimeout,
+          timeoutCount: displayCount,
           
           physics: false,
           fixed: { x: false, y: false }
@@ -1008,6 +1138,34 @@ export function buildGraph({
     pathIds.forEach((pid, idx) => {
       const eid = `edge_${edgeId++}`;
       const col = usage.pathColors.get(pid) || colors[0] || '#999';
+      
+      // Find protocol and domain information for this path
+      const pathProtocols = [];
+      const pathDestinations = [];
+      const pathDomains = [];
+      
+      // Search through all path descriptors to find this path ID
+      pathDescriptors.forEach(({ destination, destColor, pathId: descPathId, protocol, domain }) => {
+        if (descPathId === pid) {
+          if (protocol) {
+            pathProtocols.push(protocol);
+          }
+          pathDestinations.push(destination);
+          if (domain) {
+            pathDomains.push(domain);
+          }
+        }
+      });
+      
+      // Debug logging to verify data
+      if (pathProtocols.length > 0 || pathDomains.length > 0) {
+        console.log(`Edge ${eid} (path ${pid}):`, {
+          protocols: pathProtocols,
+          domains: pathDomains,
+          destinations: pathDestinations
+        });
+      }
+      
       edges.push({
         id: eid,
         from, to,
@@ -1020,8 +1178,12 @@ export function buildGraph({
         arrowStrikethrough: false,
         // Disable vis-network native tooltip; we use custom overlays
         title: undefined,
-  destinations: destinationLines,
-        paths: [pid]
+        destinations: destinationLines,
+        paths: [pid],
+        // Add protocol and domain information
+        protocols: [...new Set(pathProtocols)], // Remove duplicates
+        pathDestinations: [...new Set(pathDestinations)],
+        pathDomains: [...new Set(pathDomains)]
       });
       if (!pathMapping.has(eid)) pathMapping.set(eid, new Set());
       pathMapping.get(eid).add(pid);

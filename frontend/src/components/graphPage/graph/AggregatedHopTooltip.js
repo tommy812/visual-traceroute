@@ -61,6 +61,9 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
   timestamps: Array.isArray(it.timestamps) ? [...it.timestamps] : (it.timeStamp || it.timestamp ? [it.timeStamp || it.timestamp] : []),
         // NEW aggregations for badges/summary
         protoSet: new Set(it.protocol ? [String(it.protocol)] : []),
+        // Edge filtering information
+        isEdgeFiltered: it.isEdgeFiltered || false,
+        edgeFilteringMessage: it.edgeFilteringMessage || null,
         asnSet: new Set((it.asn != null && String(it.asn).trim() !== '') ? [String(it.asn)] : []),
         rttCount: (() => {
           if (Number.isFinite(it.avg_rtt_ms)) return 1;
@@ -93,6 +96,11 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
       if (hostname && rec.hostname === rec.ip) rec.hostname = hostname;
       // aggregate protocol, ASN, RTTs
       if (it.protocol) rec.protoSet.add(String(it.protocol));
+      // Update edge filtering information
+      if (it.isEdgeFiltered) {
+        rec.isEdgeFiltered = true;
+        rec.edgeFilteringMessage = it.edgeFilteringMessage;
+      }
       if (it.asn != null && String(it.asn).trim() !== '') rec.asnSet.add(String(it.asn));
       if (Number.isFinite(it.avg_rtt_ms)) {
         rec.rttCount += 1;
@@ -192,6 +200,13 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
   if (timeoutOnly) {
     const timeouts = Array.isArray(items) ? items.filter(it => it && (it.is_timeout || !it.ip)) : [];
     if (timeouts.length === 0) return null;
+    
+    // Check if this is an aggregated timeout
+    const isAggregatedTimeout = timeouts.some(t => t.is_aggregated_timeout);
+    const timeoutCount = timeouts.find(t => t.is_aggregated_timeout)?.timeout_count || 1;
+    const originalHopNumbers = timeouts.find(t => t.is_aggregated_timeout)?.original_hop_numbers || [];
+    const aggregatedTimeouts = timeouts.find(t => t.is_aggregated_timeout)?.aggregated_timeouts || [];
+    
     const hopNums = Array.from(new Set(timeouts.map(t => t.hopNumber).filter(n => Number.isFinite(n)))).sort((a,b)=>a-b);
     const dests = Array.from(new Set(
       timeouts.map(t => {
@@ -200,7 +215,14 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
         return dom ? `${addr} (${dom})` : addr;
       }).filter(Boolean)
     ));
-    const headerText2 = `Timeout hop${hopNums.length > 1 ? 's' : ''}${hopNums.length ? `: ${hopNums.join(', ')}` : ''}`;
+    
+    let headerText2;
+    if (isAggregatedTimeout && timeoutCount > 1) {
+      headerText2 = `Consecutive Timeout Hops: ${originalHopNumbers.join(', ')}`;
+    } else {
+      headerText2 = `Timeout hop${hopNums.length > 1 ? 's' : ''}${hopNums.length ? `: ${hopNums.join(', ')}` : ''}`;
+    }
+    
     return (
       <div style={S.container} onMouseDown={onMouseDownHeader}>
         <div style={S.header}>
@@ -209,15 +231,41 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
         </div>
         <div style={S.body}>
           <div style={{ marginBottom: 6 }}>
-            <strong>Count:</strong> {timeouts.length} occurrence{timeouts.length !== 1 ? 's' : ''}
+            <strong>Count:</strong> {isAggregatedTimeout ? `${timeoutCount} consecutive` : `${timeouts.length} occurrence${timeouts.length !== 1 ? 's' : ''}`}
           </div>
+          {isAggregatedTimeout && originalHopNumbers.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <strong>Original Hops:</strong> {originalHopNumbers.join(', ')}
+            </div>
+          )}
           {dests.length > 0 && (
             <div style={{ marginBottom: 6 }}>
               <strong>Destinations:</strong> {dests.join(', ')}
             </div>
           )}
+          
+          {/* Show individual timeout details for aggregated timeouts */}
+          {isAggregatedTimeout && aggregatedTimeouts.length > 0 && (
+            <div style={{ marginBottom: 6 }}>
+              <strong>Individual Timeouts:</strong>
+              <div style={{ marginTop: 4, fontSize: 10 }}>
+                {aggregatedTimeouts.map((timeout, idx) => (
+                  <div key={idx} style={{ marginBottom: 2, paddingLeft: 8 }}>
+                    <strong>Hop {timeout.hop_number || (idx + 1)}:</strong> 
+                    {timeout.destination ? ` → ${timeout.destination}` : ''}
+                    {timeout.pathType ? ` (${timeout.pathType})` : ''}
+                    {timeout.destinationReached ? ' ✓' : ''}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          
           <div style={{ color: '#555' }}>
-            No IP response received for these hop(s).
+            {isAggregatedTimeout && timeoutCount > 1 
+              ? `No IP response received for ${timeoutCount} consecutive hops.`
+              : 'No IP response received for these hop(s).'
+            }
           </div>
         </div>
       </div>
@@ -297,6 +345,20 @@ export default function AggregatedHopTooltip({ visible, x, y, items, pinned, onM
                       return parts.length ? parts.join(' • ') : null;
                     })()}
                   </div>
+                  {/* Edge filtering message */}
+                  {r.isEdgeFiltered && r.edgeFilteringMessage && (
+                    <div style={{ 
+                      marginTop: 4, 
+                      padding: '4px 6px', 
+                      backgroundColor: '#fff3cd', 
+                      border: '1px solid #ffeaa7', 
+                      borderRadius: 3, 
+                      fontSize: 10, 
+                      color: '#856404' 
+                    }}>
+                      ⚠️ {r.edgeFilteringMessage}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

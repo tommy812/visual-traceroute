@@ -1,3 +1,10 @@
+/**
+ * Color Utilities
+ * 
+ * Handles color generation for graph visualization including destination colors
+ * and path highlighting. Uses HSL color space for better color distribution.
+ */
+
 export function hslToHex(h, s, l) {
   l /= 100;
   const a = (s * Math.min(l, 1 - l)) / 100;
@@ -10,9 +17,20 @@ export function hslToHex(h, s, l) {
 }
 
 export function generateDestinationColor(index, saturation = 65, lightness = 55) {
-  // Use golden ratio for better color distribution
+  // Use golden ratio for better color distribution, avoiding red and green ranges
   const goldenRatio = 0.618033988749;
-  const hue = (index * goldenRatio * 360) % 360;
+  let hue = (index * goldenRatio * 360) % 360;
+  
+  // Avoid red (0-30, 330-360) and green (90-150) ranges
+  // Map problematic hues to safer alternatives
+  if ((hue >= 0 && hue <= 30) || (hue >= 330 && hue <= 360)) {
+    // Red range -> shift to orange-red (15-30) or purple-red (330-345)
+    hue = hue <= 30 ? 45 : 315; // Orange or purple-red
+  } else if (hue >= 90 && hue <= 150) {
+    // Green range -> shift to blue-green (120-135) or yellow-green (60-75)
+    hue = hue <= 120 ? 75 : 135; // Yellow-green or blue-green
+  }
+  
   return hslToHex(hue, saturation, lightness);
 }
 
@@ -29,12 +47,12 @@ export function colorForKey(key, saturation = 65, lightness = 55) {
 }
 
 export const pathHighlightColors = [
-  "#FF6B35", "#004E89", "#960000ff", "#7209B7", "#FF1654",
+  "#FF6B35", "#004E89", "#2c0a52ff", "#7209B7", "#270b13ff",
   "#FF8500", "#0FA3B1", "#B5179E", "#F72585", "#4361EE",
-  "#2E8B57", "#FF4500", "#4169E1", "#DC143C", "#FF1493",
-  "#32CD32", "#8A2BE2", "#FF6347", "#1E90FF", "#FFD700",
+  "#5b4813ff", "#574037ff", "#4169E1", "#2b2123ff", "#FF1493",
+  "#012e2bff", "#8A2BE2", "#FF6347", "#1E90FF", "#FFD700",
   "#20B2AA", "#FF69B4", "#8B4513", "#FF00FF", "#00CED1",
-  "#9ACD32", "#FF7F50", "#6495ED", "#D2691E", "#BA55D3"
+  "#283116ff", "#FF7F50", "#6495ED", "#D2691E", "#BA55D3"
 ];
 
 export function adjustColorIntensity(hexColor, intensity = 0.6) {

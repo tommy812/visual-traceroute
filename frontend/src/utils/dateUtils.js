@@ -25,10 +25,10 @@ export const formatDateRange = (start, end) => {
 };
 
 /**
- * Get current day range (00:00 to current time)
+ * Get current day range (00:00 to current time -1 hour)
  */
 export const getCurrentDayRange = () => {
-  const now = nowLondon();
+  const now = nowLondon().minus({ hours: 1 });
   const start = now.startOf('day');
   return { start: start.toJSDate(), end: now.toJSDate() };
 };
@@ -44,10 +44,10 @@ export const getYesterdayRange = () => {
 };
 
 /**
- * Get current week range (Monday 00:00 to current time)
+ * Get current week range (Monday 00:00 to current time - 1 hour)
  */
 export const getCurrentWeekRange = () => {
-  const now = nowLondon();
+  const now = nowLondon().minus({ hours: 1 });
   // Luxon weekNumber defaults to ISO weeks (Mon-Sun). Use startOf('week').
   const start = now.startOf('week');
   return { start: start.toJSDate(), end: now.toJSDate() };
@@ -74,7 +74,7 @@ export const getLastWeekRange = () => {
  * @returns {Object} { start: Date, end: Date } 
  */
 export const getLast30DaysRange = () => {
-  const now = nowLondon();
+  const now = nowLondon().minus({ hours: 1 });
   const start = now.minus({ days: 30 }).startOf('day');
   return { start: start.toJSDate(), end: now.toJSDate() };
 };
@@ -97,7 +97,7 @@ export function getPeriodFromRange(start, end, now = new Date(), tolMs = 60_000)
   if (!start || !end) return null;
 
   const isSameWithin = (a, b) => Math.abs(a - b) <= tolMs;
-  const nowDt = nowLondon();
+  const nowDt = nowLondon().minus({ hours: 1 });
   const startDt = toLondon(start);
   const endDt = toLondon(end);
 

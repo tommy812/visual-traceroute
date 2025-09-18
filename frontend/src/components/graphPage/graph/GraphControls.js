@@ -64,22 +64,18 @@ const GraphControls = ({
     if (networkHierarchy === 'asn') {
       hierarchyInstructions.push(
         { icon: "🏢", text: "ASN View: Nodes grouped by Autonomous System" },
-        { icon: "👆", text: "Click ASN boxes to expand/collapse" }
       );
     } else if (networkHierarchy === 'subnet') {
       hierarchyInstructions.push(
         { icon: "🌐", text: "Subnet View: Nodes grouped by /64 prefix" },
-        { icon: "👆", text: "Click prefix boxes to expand/collapse" }
       );
     } else if (networkHierarchy === 'isp-pop') {
       hierarchyInstructions.push(
         { icon: "🏢", text: "ISP-PoP View: Nodes grouped by /48 prefix" },
-        { icon: "👆", text: "Click prefix boxes to expand/collapse" }
       );
     } else if (networkHierarchy === 'isp') {
       hierarchyInstructions.push(
         { icon: "🌍", text: "ISP View: Nodes grouped by /32 prefix" },
-        { icon: "👆", text: "Click prefix boxes to expand/collapse" }
       );
     } else {
       hierarchyInstructions.push(
@@ -298,6 +294,16 @@ const GraphControls = ({
                   <span style={{ color: "#28a745", marginLeft: "4px" }}>●</span> :
                   <span style={{ color: "#6c757d", marginLeft: "4px" }}>⋯</span>
                 }<br />
+                {path?.protocols && path.protocols.length > 0 && (
+                  <>
+                    <strong>Protocols:</strong> {path.protocols.join(', ')}<br />
+                  </>
+                )}
+                {path?.domains && path.domains.length > 0 && (
+                  <>
+                    <strong>Domains:</strong> {path.domains.join(', ')}<br />
+                  </>
+                )}
                 <strong>Nodes:</strong> {path?.nodes?.length || 0} | <strong>Edges:</strong> {path?.edges?.length || 0}
               </div>
             </div>

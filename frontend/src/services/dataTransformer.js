@@ -3,23 +3,18 @@ import PathAnalyzer from './transformers/PathAnalyzer';
 import NetworkCalculator from './transformers/NetworkCalculator';
 
 /**
- * DataTransformer - Orchestrates the transformation of raw network data
+ * DataTransformer
  * 
- * Single Responsibility: Coordinate transformation process using specialized services
- * Follows Dependency Inversion: Depends on abstractions, not concrete implementations
+ * Transforms raw network trace data into structured format for visualization.
+ * Handles path analysis, protocol grouping, and data aggregation.
  */
+
 class DataTransformer {
   constructor(validator = DataValidator, pathAnalyzer = PathAnalyzer, networkCalculator = NetworkCalculator) {
     this.validator = validator;
     this.pathAnalyzer = pathAnalyzer;
     this.networkCalculator = networkCalculator;
   }
-  /**
-   * Transform raw database data into the format expected by the frontend
-   * @param {Array} rawData - Array of trace runs with hops from the database
-   * @param {Object} opts - Aggregation options
-   * @returns {Object} - Transformed data in frontend format
-   */
   transformNetworkData(rawData, opts = {}) {
   if (!rawData || typeof rawData !== 'object') return {};
   // If backend already supplied aggregated shape just return
@@ -136,9 +131,6 @@ class DataTransformer {
 
 
 
-  /**
-   * Transform a destination's trace runs into the expected format
-   */
   transformDestinationData(destination, traceRuns, opts = {}) {
     // Convert trace runs to path format
     const paths = traceRuns.map(traceRun => this.convertTraceRunToPath(traceRun));
@@ -148,7 +140,16 @@ class DataTransformer {
       this.applyPathLevelFilters(paths, opts) : paths;
 
     // Group paths by similarity to identify primary vs alternatives
-    const { primary: primaryPaths, alternatives: altPaths } = this.pathAnalyzer.identifyPrimaryAndAlternatives(filteredPaths);
+    // Pass transformation options for advanced sorting
+    const sortingConfig = {
+      aggregationMode: opts.aggregationMode || 'none',
+      aggregationScope: opts.aggregationScope || 'per-destination', 
+      networkHierarchy: opts.networkHierarchy || 'none',
+      showPrimaryOnly: opts.showPrimaryOnly || false,
+      destinationCount: 1 // Single destination context
+    };
+    
+    const { primary: primaryPaths, alternatives: altPaths } = this.pathAnalyzer.identifyPrimaryAndAlternatives(filteredPaths, sortingConfig);
     const primaryPath = primaryPaths[0];
     const alternatives = altPaths;
 
@@ -162,7 +163,7 @@ class DataTransformer {
     // Build protocol_groups: for each protocol, compute its own primary/alternatives
     const protocol_groups = {};
     Object.entries(byProtocol).forEach(([proto, groupPaths]) => {
-      const { primary: protoPrimaryPaths, alternatives: protoAlts } = this.pathAnalyzer.identifyPrimaryAndAlternatives(groupPaths);
+      const { primary: protoPrimaryPaths, alternatives: protoAlts } = this.pathAnalyzer.identifyPrimaryAndAlternatives(groupPaths, sortingConfig);
       const protoPrimary = protoPrimaryPaths[0];
 
       // Ensure protocol is set on aggregated outputs

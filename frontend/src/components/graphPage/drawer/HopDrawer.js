@@ -41,6 +41,12 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     const pathTypes = [...new Set(hopData.map(h => h.pathType))];
     const protocols = [...new Set(hopData.map(h => (typeof h.protocol === 'string' ? h.protocol.trim() : h.protocol)).filter(Boolean))];
 
+    // Check for edge filtering information
+    const edgeFilteredHops = hopData.filter(h => h.isEdgeFiltered);
+    const hasEdgeFiltering = edgeFilteredHops.length > 0;
+    const edgeFilteringMessage = edgeFilteredHops[0]?.edgeFilteringMessage || null;
+    const reachingProtocols = edgeFilteredHops[0]?.reachingProtocols || [];
+
     // Check for IP geolocation data
     const ipGeoData = hopData.find(h => h.ipGeoInfo)?.ipGeoInfo || null;
     const hasLoadingGeoData = hopData.some(h => h.hasLoadingGeoData === true);
@@ -60,8 +66,11 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
       hasLoadingGeoData,
       isTimeoutHop,
       hasValidIP,
-  protocols,
-  destinationDomains
+      protocols,
+      destinationDomains,
+      hasEdgeFiltering,
+      edgeFilteringMessage,
+      reachingProtocols
     };
   }, [hopData]);
 
@@ -254,7 +263,7 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
     return null;
   }
 
-  const { sharedIP, sharedHostname, hostnames, destinations, destinationDomains, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP } = processedHopData;
+  const { sharedIP, sharedHostname, hostnames, destinations, destinationDomains, protocols, pathTypes, hasLoadingGeoData, isTimeoutHop, hasValidIP, hasEdgeFiltering, edgeFilteringMessage, reachingProtocols } = processedHopData;
 
 
   return (
@@ -399,6 +408,24 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             <div>
               <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
             </div>
+            {hasEdgeFiltering && edgeFilteringMessage && (
+              <div style={{
+                marginTop: '8px',
+                padding: '8px 12px',
+                backgroundColor: '#fff3cd',
+                border: '1px solid #ffeaa7',
+                borderRadius: '4px',
+                fontSize: '14px',
+                color: '#856404'
+              }}>
+                <strong>⚠️ Edge Filtering Detected:</strong> {edgeFilteringMessage}
+                {reachingProtocols.length > 0 && (
+                  <div style={{ marginTop: '4px', fontSize: '12px' }}>
+                    Protocols that reach destination: {reachingProtocols.join(', ')}
+                  </div>
+                )}
+              </div>
+            )}
             <div>
               <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
             </div>

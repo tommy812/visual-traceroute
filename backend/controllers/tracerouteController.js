@@ -78,9 +78,8 @@ class TracerouteController {
         const dest = destination.trim();
         // If the destinations.address column is of type INET, ilike will fail.
         // Detect IP (v4/v6) and use equality; otherwise use ilike for hostname substrings.
-        const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(dest);
         const isIPv6 = dest.includes(':');
-        if (isIPv4 || isIPv6) {
+        if ( isIPv6) {
           query = query.eq('destinations.address', dest);
         } else {
           query = query.ilike('destinations.address', `%${dest}%`);
@@ -120,7 +119,7 @@ class TracerouteController {
     }
   }
 
-  // Get the latest trace run for a destination address (IPv4/IPv6)
+  // Get the latest trace run for a destination address (IPv6)
   async getLatestRunByDestination(req, res) {
     try {
       const { destination } = req.query;
@@ -128,7 +127,7 @@ class TracerouteController {
         return res.status(400).json({ success: false, error: 'destination is required' });
       }
       const dest = destination.trim();
-      const isIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(dest);
+ 
       const isIPv6 = dest.includes(':');
 
       let query = supabase
@@ -137,7 +136,7 @@ class TracerouteController {
         .order('timestamp', { ascending: false })
         .limit(1);
 
-      if (isIPv4 || isIPv6) {
+      if (isIPv6) {
         query = query.eq('destinations.address', dest);
       } else {
         // Fallback to hostname substring match when not an IP

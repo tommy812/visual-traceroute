@@ -22,6 +22,20 @@ export default function EdgeTooltip({ visible, x, y, edge, getNodeLabel, onMove 
         .filter(Boolean)
     : [];
   const paths = edge && Array.isArray(edge.paths) ? edge.paths : (edge?.paths ? edge.paths : []);
+  const protocols = edge && Array.isArray(edge.protocols) ? edge.protocols : [];
+  const pathDestinations = edge && Array.isArray(edge.pathDestinations) ? edge.pathDestinations : [];
+  const pathDomains = edge && Array.isArray(edge.pathDomains) ? edge.pathDomains : [];
+  
+  // Debug logging to verify data
+  if (edge && (protocols.length > 0 || pathDomains.length > 0)) {
+    console.log('EdgeTooltip received edge:', {
+      id: edge.id,
+      protocols,
+      pathDomains,
+      pathDestinations,
+      destinations: edge.destinations
+    });
+  }
 
   const onMouseDownHeader = (e) => {
     e.preventDefault();
@@ -96,6 +110,13 @@ export default function EdgeTooltip({ visible, x, y, edge, getNodeLabel, onMove 
         <div style={{ marginBottom: 6 }}>
           <strong>To:</strong> {toLabel}
         </div>
+        
+        {protocols.length > 0 && (
+          <div style={{ marginBottom: 6 }}>
+            <strong>Protocols:</strong> {protocols.join(', ')}
+          </div>
+        )}
+        
         {destinations.length > 0 && (
           <div style={{ marginTop: 8 }}>
             <strong>Destinations:</strong>
@@ -104,6 +125,16 @@ export default function EdgeTooltip({ visible, x, y, edge, getNodeLabel, onMove 
             </ul>
           </div>
         )}
+        
+        {pathDomains.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <strong>Domains:</strong>
+            <ul style={S.list}>
+              {pathDomains.map((domain, i) => <li key={i}>{domain}</li>)}
+            </ul>
+          </div>
+        )}
+        
         <div style={{ marginTop: 8 }}>
           <strong>Path count:</strong> {paths.length || (edge.paths ? edge.paths.length : 0)}
         </div>

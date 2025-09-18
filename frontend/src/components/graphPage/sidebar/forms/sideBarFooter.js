@@ -1,6 +1,6 @@
 import React from 'react';
 
-const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
+const SidebarFooter = ({ onOpenSettings, onGoLanding, onShowDocs }) => {
   return (
     <div className="rgv-sidebar-footer" style={{
       borderTop: '1px solid #d0d7de',
@@ -29,9 +29,9 @@ const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
       >
         ⬅ Close Chart
       </button>
-      {/* Not needed for now  
+     
       <button
-        onClick={onOpenSettings}
+        onClick={onShowDocs}
         style={{
           flex: 1,
           background: '#ffffff',
@@ -42,9 +42,10 @@ const SidebarFooter = ({ onOpenSettings, onGoLanding }) => {
           fontSize: '12px',
           fontWeight: 600
         }}
+        title="View documentation"
       >
-        ⚙️ Settings
-      </button> */}
+        📖 Documentation
+      </button>
       
     </div>
   );

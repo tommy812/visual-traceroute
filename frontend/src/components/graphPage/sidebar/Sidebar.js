@@ -50,8 +50,9 @@ const Sidebar = ({
   onResetFilters,
   apiHealthy,
   onOpenSettings,
-  onGoLanding
-  , onImportGraph, onImportError, onClearImportedGraph, importedName
+  onGoLanding,
+  onShowDocs,
+  onImportGraph, onImportError, onClearImportedGraph, importedName
 }) => {
   const [open, setOpen] = useState(false);
 
@@ -150,6 +151,7 @@ const Sidebar = ({
     <SideBarFooter
       onOpenSettings={onOpenSettings}
       onGoLanding={onGoLanding}
+      onShowDocs={onShowDocs}
     />
     </div>
     </>

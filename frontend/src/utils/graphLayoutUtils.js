@@ -1,4 +1,15 @@
 
+/**
+ * Graph Layout Utilities
+ * 
+ * Implements hierarchical graph layout algorithms for network visualization.
+ * Uses techniques for edge crossing minimization and node alignment.
+ * 
+ * References:
+ * - Sugiyama, K., Tagawa, S., & Toda, M. (1981). Methods for visual understanding of hierarchical system structures
+ * - Eades, P., & Wormald, N. C. (1994). Edge crossings in drawings of bipartite graphs
+ */
+
 export function computeAlignedLevels(filteredData) {
   // Build all considered paths as arrays of hop node keys (IPs or your node ids)
   const paths = [];
