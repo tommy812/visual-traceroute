@@ -1,7 +1,7 @@
 /**
  * Vis.js Options Builder
  * 
- * Configures vis.js network visualization options for different layout modes.
+ * Configures vis.js network visualisation options for different layout modes.
  * Implements hierarchical layouts and physics settings for optimal graph display.
  */
 

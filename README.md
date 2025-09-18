@@ -1,8 +1,8 @@
-# 🌐 Network Traceroute Visualization
+# 🌐 Network Traceroute visualisation
 
 A powerful React-based application for visualizing network paths from traceroute data. Explore routing behavior, latency patterns, and peering relationships over time with interactive graphs and advanced filtering capabilities.
 
-![Network Graph Visualization](frontend/public/graph.png)
+![Network Graph visualisation](frontend/public/graph.png)
 
 ## 📋 Table of Contents
 
@@ -63,12 +63,12 @@ A powerful React-based application for visualizing network paths from traceroute
 
 ### Core Functionality
 - **Interactive Network Graphs**: Visualize traceroute paths with nodes and edges
-- **Real-time Data Processing**: Live traceroute data analysis and visualization
+- **Real-time Data Processing**: Live traceroute data analysis and visualisation
 - **Multi-destination Analysis**: Compare paths across multiple destinations
 - **Time Range Filtering**: Focus on specific time periods for analysis
 - **Advanced Path Filtering**: Filter by protocols, RTT, path types, and more
 
-### Advanced Visualization
+### Advanced visualisation
 - **Path Aggregation**: Group paths by shared IPs to reduce visual clutter
 - **Network Hierarchy**: Group nodes by ASN, subnet, ISP-POP, or ISP levels
 - **Interactive Highlighting**: Click nodes/edges to highlight related paths
@@ -171,7 +171,7 @@ Interactive path highlighting helps trace specific routes through the network:
 
 ### Graph Import
 - **JSON Import**: Load previously exported graph data
-- **Share Visualizations**: Share graph states with others
+- **Share visualisations**: Share graph states with others
 - **Historical Analysis**: Analyze saved network states
 
 ### Additional Features
@@ -180,7 +180,7 @@ Interactive path highlighting helps trace specific routes through the network:
 
 ## ⚡ Graph Optimization
 
-Advanced algorithms automatically optimize graph layout and path ordering for better visualization:
+Advanced algorithms automatically optimize graph layout and path ordering for better visualisation:
 
 ### Layout Optimization
 - **Edge Crossing Minimization**: Intelligent algorithms reduce visual clutter
@@ -250,7 +250,7 @@ npm start
 2. **Set Time Range**: Use quick access presets or custom date ranges
 3. **Apply Filters**: Use advanced filters to focus on specific data
 4. **Explore Graph**: Click nodes/edges to highlight paths and view details
-5. **Export Results**: Save visualizations or data for further analysis
+5. **Export Results**: Save visualisations or data for further analysis
 
 ### Advanced Usage
 - **Compare Destinations**: Select multiple IPs to see shared paths
@@ -303,7 +303,7 @@ Domains → Destinations (IPs) → Trace runs → Hops
   - **Show All Paths**: Displays every individual path with unique colors
   - **Shared IPs**: Groups paths that share common intermediate hops, showing usage counts
 - **How does network hierarchy work?** You can group IPs by different network levels (ASN, subnet, ISP-POP, ISP) to understand routing at various scales. Click grouped nodes to expand and see individual IPs
-- **Can I save and share my graph visualizations?** Yes! Use the JSON export feature to save graph data, then import it later or share with others
+- **Can I save and share my graph visualisations?** Yes! Use the JSON export feature to save graph data, then import it later or share with others
 - **What's protocol filtering detection?** The system automatically detects when network protocols are filtered at network edges by analyzing traceroute behavior patterns
 
 ## 🤝 Contributing
@@ -334,7 +334,7 @@ This project is licensed under the GNU General Public License (GPL) - see the [L
 
 ## 🙏 Acknowledgments
 
-- Built with React and vis.js for graph visualization
+- Built with React and vis.js for graph visualisation
 - Backend powered by Node.js and Express
 - Python services for traceroute execution and parsing
 

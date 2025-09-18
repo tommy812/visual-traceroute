@@ -166,7 +166,7 @@ const DocumentationPage = ({ onBack, onEnter }) => {
         <section id="export">
           <h2>Export and import</h2>
           <ul>
-            <li><strong>Graph Export</strong>: download the current graph visualization:
+            <li><strong>Graph Export</strong>: download the current graph visualisation:
               <ul>
                 <li><strong>PNG</strong>: high-quality raster image for presentations</li>
                 <li><strong>SVG</strong>: scalable vector format for editing</li>
@@ -176,7 +176,7 @@ const DocumentationPage = ({ onBack, onEnter }) => {
             <li><strong>Graph Import</strong>: load previously exported graph data:
               <ul>
                 <li>Import JSON files to restore saved graph states</li>
-                <li>Share graph visualizations with others</li>
+                <li>Share graph visualisations with others</li>
                 <li>Analyze historical network states</li>
               </ul>
             </li>
@@ -187,7 +187,7 @@ const DocumentationPage = ({ onBack, onEnter }) => {
 
         <section id="optimization">
           <h2>Graph optimization</h2>
-          <p>Advanced algorithms automatically optimize graph layout and path ordering for better visualization:</p>
+          <p>Advanced algorithms automatically optimize graph layout and path ordering for better visualisation:</p>
           <ul>
             <li><strong>Layout Optimization</strong>: intelligent algorithms minimize edge crossings and improve readability</li>
             <li><strong>Path Sorting</strong>: multiple sorting strategies available:
@@ -266,7 +266,7 @@ const DocumentationPage = ({ onBack, onEnter }) => {
               </ul>
             </li>
             <li><strong>How does network hierarchy work?</strong> You can group IPs by different network levels (ASN, subnet, ISP-POP, ISP) to understand routing at various scales. Click grouped nodes to expand and see individual IPs.</li>
-            <li><strong>Can I save and share my graph visualizations?</strong> Yes! Use the JSON export feature to save graph data, then import it later or share with others.</li>
+            <li><strong>Can I save and share my graph visualisations?</strong> Yes! Use the JSON export feature to save graph data, then import it later or share with others.</li>
             <li><strong>What's protocol filtering detection?</strong> The system automatically detects when network protocols are filtered at network edges by analyzing traceroute behavior patterns.</li>
           </ul>
         </section>

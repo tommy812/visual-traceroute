@@ -83,7 +83,7 @@ class ApiService {
     return this.makeRequest(`/runs/latest-by-destination?${params.toString()}`);
   }
 
-  // Get network data for visualization
+  // Get network data for visualisation
   async getNetworkData(filters = {}) {
     const params = new URLSearchParams();
 

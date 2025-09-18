@@ -73,7 +73,7 @@ app.use('/api/peeringdb', peeringdbRoutes);
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Traceroute Visualization API',
+    message: 'Traceroute visualisation API',
     version: '1.0.0',
     endpoints: {
       health: '/health',

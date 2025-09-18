@@ -241,7 +241,7 @@ class TracerouteController {
     }
   }
 
-  // Get aggregated data for network visualization
+  // Get aggregated data for network visualisation
   async getNetworkData(req, res) {
     try {
       const {

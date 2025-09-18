@@ -1,6 +1,6 @@
-# Traceroute Visualization Backend
+# Traceroute visualisation Backend
 
-A RESTful API backend for the traceroute network visualization application, built with Node.js, Express, and Supabase.
+A RESTful API backend for the traceroute network visualisation application, built with Node.js, Express, and Supabase.
 
 ## 🚀 Quick Start
 
@@ -104,7 +104,7 @@ CREATE TABLE hops (
 - **GET** `/runs/:trace_run_id/hops` - Get hops for a specific trace run
 
 #### Network Data (Main Frontend Endpoint)
-- **GET** `/network-data` - Get aggregated data for visualization
+- **GET** `/network-data` - Get aggregated data for visualisation
   - Query params: `destinations`, `start_date`, `end_date`, `method_id`
 
 #### Utilities

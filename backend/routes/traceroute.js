@@ -18,7 +18,7 @@ router.get('/runs/:id', tracerouteController.getTraceRunById);
 // Hops
 router.get('/runs/:trace_run_id/hops', tracerouteController.getHops);
 
-// Main endpoint for network visualization data
+// Main endpoint for network visualisation data
 router.get('/network-data', tracerouteController.getNetworkData);
 
 // Utility endpoints

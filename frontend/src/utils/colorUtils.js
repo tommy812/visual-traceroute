@@ -1,7 +1,7 @@
 /**
  * Color Utilities
  * 
- * Handles color generation for graph visualization including destination colors
+ * Handles color generation for graph visualisation including destination colors
  * and path highlighting. Uses HSL color space for better color distribution.
  */
 

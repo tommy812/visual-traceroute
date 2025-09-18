@@ -1,7 +1,7 @@
 /**
  * GraphOptimizationService
  * 
- * Handles path ordering for different graph visualization modes to improve clarity.
+ * Handles path ordering for different graph visualisation modes to improve clarity.
  * Uses various algorithms including graph centrality, topology-aware sorting, and
  * edge crossing minimization techniques.
  * 

@@ -5,7 +5,7 @@ import NetworkCalculator from './transformers/NetworkCalculator';
 /**
  * DataTransformer
  * 
- * Transforms raw network trace data into structured format for visualization.
+ * Transforms raw network trace data into structured format for visualisation.
  * Handles path analysis, protocol grouping, and data aggregation.
  */
 

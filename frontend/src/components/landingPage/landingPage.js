@@ -13,7 +13,7 @@ const LandingPage = ({ onEnter, onShowDocs }) => {
         📘 Documentation
       </button>
       <div className="landing-left">
-        <h1 className="landing-title">Network Traceroute Visualization</h1>
+        <h1 className="landing-title">Network Traceroute visualisation</h1>
         <p className="landing-subtitle">
           Explore end-to-end network paths, latency, alternative routes, and hop level details with interactive visual analytics.
         </p>

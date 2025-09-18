@@ -2,7 +2,7 @@
 /**
  * Graph Layout Utilities
  * 
- * Implements hierarchical graph layout algorithms for network visualization.
+ * Implements hierarchical graph layout algorithms for network visualisation.
  * Uses techniques for edge crossing minimization and node alignment.
  * 
  * References:
