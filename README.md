@@ -328,9 +328,7 @@ This is an **open-source** project. We welcome contributions from the community!
 - Provide detailed reproduction steps for bugs
 - Include system information and error logs
 
-## 📄 License
 
-This project is licensed under the GNU General Public License (GPL) - see the [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
