@@ -62,7 +62,7 @@ A powerful React-based application for visualizing network paths from traceroute
 ## ✨ Features
 
 ### Core Functionality
-- **Interactive Network Graphs**: Visualize traceroute paths with nodes and edges
+- **Interactive Network Graphs**: visualise traceroute paths with nodes and edges
 - **Real-time Data Processing**: Live traceroute data analysis and visualisation
 - **Multi-destination Analysis**: Compare paths across multiple destinations
 - **Time Range Filtering**: Focus on specific time periods for analysis

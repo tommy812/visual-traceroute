@@ -283,7 +283,7 @@ const ChartsApp = React.memo(({onGoLanding, onShowDocs}) => {
             }}>
               <div style={{ fontSize: 40, marginBottom: 8 }}>🧭</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: '#0d47a1', marginBottom: 6 }}>
-                Select destinations to visualize paths
+                Select destinations to visualise paths
               </div>
               <div style={{ fontSize: 13, color: '#455a64', marginBottom: 18 }}>
                 Use the Destinations panel on the left to pick one or more targets. You can search, expand domains, or select all.

@@ -16,7 +16,7 @@ const DocumentationPage = ({ onBack, onEnter }) => {
         <nav aria-label="Table of contents">
           <h2>Overview</h2>
           <p>
-            This application visualizes network paths from traceroute data to help you explore
+            This application visualises network paths from traceroute data to help you explore
             routing behavior, latency, and peering relationships over time. Use the sidebar to
             pick destinations, apply filters, and the interactive graph to inspect paths and hops.
           </p>
