@@ -3,6 +3,7 @@ import { generateDestinationColor } from './colorUtils';
 import { curvedForIndex } from './edges';
 import protocolFilteringService from '../services/protocolFilteringService';
 import pathSortingService from '../services/pathSortingService';
+import logger from './logger';
 
 // Map hierarchy → IPv6 mask
 const HIERARCHY_MASKS_V6 = {
@@ -1159,7 +1160,7 @@ export function buildGraph({
       
       // Debug logging to verify data
       if (pathProtocols.length > 0 || pathDomains.length > 0) {
-        console.log(`Edge ${eid} (path ${pid}):`, {
+        logger.log(`Edge ${eid} (path ${pid}):`, {
           protocols: pathProtocols,
           domains: pathDomains,
           destinations: pathDestinations

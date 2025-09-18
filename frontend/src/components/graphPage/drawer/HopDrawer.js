@@ -405,8 +405,11 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
             <div style={{ marginBottom: '10px' }}>
               <strong>Path Types:</strong> {pathTypes.join(', ')}
             </div>
-            <div>
+            <div style={{ marginBottom: '10px' }}>
               <strong>Protocol:</strong> {protocols?.length ? protocols.join(', ') : 'Unknown'}
+            </div>        
+            <div style={{ marginBottom: '10px' }}>
+              <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
             </div>
             {hasEdgeFiltering && edgeFilteringMessage && (
               <div style={{
@@ -426,9 +429,6 @@ const HopDrawer = React.memo(({ hopData, isOpen, onClose, onHighlightPath = null
                 )}
               </div>
             )}
-            <div>
-              <strong>Total Occurrences:</strong> {visibleHops.length} path(s)
-            </div>
 
           </div>
         </div>

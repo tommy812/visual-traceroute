@@ -3,6 +3,8 @@
  * Provides geolocation, ISP, and other metadata for IP addresses
  */
 
+import logger from "../utils/logger";
+
 class IPGeoService {
   constructor() {
   // point to backend proxy which exposes HTTPS to the frontend
@@ -18,27 +20,27 @@ class IPGeoService {
    * @returns {Promise<Object>} IP information object
    */
   async getIPInfo(ip) {
-    console.log('getIPInfo called with IP:', ip);
+    logger.log('getIPInfo called with IP:', ip);
     
     // Return null for invalid or private IPs
     if (!ip || !this.isValidPublicIP(ip)) {
-      console.log('IP is invalid or private:', ip);
+      logger.log('IP is invalid or private:', ip);
       return null;
     }
 
     // Check cache first
     if (this.cache.has(ip)) {
-      console.log('Returning cached result for IP:', ip);
+      logger.log('Returning cached result for IP:', ip);
       return this.cache.get(ip);
     }
 
     // Check if request is already in progress
     if (this.requestQueue.has(ip)) {
-      console.log('Request already in progress for IP:', ip);
+      logger.log('Request already in progress for IP:', ip);
       return this.requestQueue.get(ip);
     }
 
-    console.log('Making new API request for IP:', ip);
+    logger.log('Making new API request for IP:', ip);
     
     // Create new request
     const requestPromise = this.fetchIPInfo(ip);
@@ -49,10 +51,10 @@ class IPGeoService {
       
       // Cache successful results
       if (result && result.status === 'success') {
-        console.log('Caching successful result for IP:', ip);
+        logger.log('Caching successful result for IP:', ip);
         this.cache.set(ip, result);
       } else {
-        console.log('Not caching result for IP:', ip, 'Status:', result?.status);
+        logger.log('Not caching result for IP:', ip, 'Status:', result?.status);
       }
       
       return result;
@@ -61,7 +63,7 @@ class IPGeoService {
       return null;
     } finally {
       // Remove from queue
-      console.log('Removing IP from request queue:', ip);
+      logger.log('Removing IP from request queue:', ip);
       this.requestQueue.delete(ip);
     }
   }
@@ -74,7 +76,7 @@ class IPGeoService {
   async fetchIPInfo(ip) {
   const encodedIp = encodeURIComponent(ip);
   const url = `${this.baseURL}/${encodedIp}`;
-  console.log('Fetching IP info from backend proxy:', url, 'original ip:', ip, 'encoded:', encodedIp);
+  logger.log('Fetching IP info from backend proxy:', url, 'original ip:', ip, 'encoded:', encodedIp);
 
     const response = await fetch(url, {
       method: 'GET',
@@ -89,7 +91,7 @@ class IPGeoService {
     }
 
     const data = await response.json();
-    console.log('Proxy API response:', data);
+    logger.log('Proxy API response:', data);
 
     // Keep the same behavior: return raw data and let caller use formatIPInfo
     return data;
@@ -115,7 +117,7 @@ class IPGeoService {
     const isIPv6 = ipv6Regex.test(ip);
 
     if (!isIPv4 && !isIPv6) {
-      console.log('IP format validation failed for:', ip);
+      logger.log('IP format validation failed for:', ip);
       return false;
     }
 
@@ -161,7 +163,7 @@ class IPGeoService {
       if (ipLower.startsWith('2001:db8:')) return false;
     }
 
-    console.log('IP validation passed for:', ip, isIPv4 ? '(IPv4)' : '(IPv6)');
+    logger.log('IP validation passed for:', ip, isIPv4 ? '(IPv4)' : '(IPv6)');
     return true;
   }
 
@@ -222,7 +224,7 @@ class IPGeoService {
     }
     
     if (ipInfo.status !== 'success') {
-      console.log('IP info has non-success status:', ipInfo.status, ipInfo.message);
+      logger.log('IP info has non-success status:', ipInfo.status, ipInfo.message);
       return null;
     }
 

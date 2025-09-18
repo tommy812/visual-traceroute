@@ -1,6 +1,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { pathHighlightColors } from '../utils/colorUtils';
+import logger from '../utils/logger';
 
 export default function usePathHighlighting({ graph, pathMapping, nodeDetails }) {
   const [highlightedPaths, setHighlightedPaths] = useState([]);
@@ -202,7 +203,7 @@ export default function usePathHighlighting({ graph, pathMapping, nodeDetails })
         
         // Debug logging to verify data
         if (protocols.length > 0 || domains.length > 0) {
-          console.log(`Path highlighting for edge ${elementId}:`, {
+          logger.log(`Path highlighting for edge ${elementId}:`, {
             protocols,
             domains,
             edge: edge ? { id: edge.id, protocols: edge.protocols, pathDomains: edge.pathDomains } : null

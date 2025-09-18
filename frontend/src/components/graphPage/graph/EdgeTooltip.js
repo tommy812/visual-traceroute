@@ -1,3 +1,4 @@
+import logger from '../../../utils/logger';
 import React, { useEffect, useRef, useState } from 'react';
 
 export default function EdgeTooltip({ visible, x, y, edge, getNodeLabel, onMove }) {
@@ -28,7 +29,7 @@ export default function EdgeTooltip({ visible, x, y, edge, getNodeLabel, onMove 
   
   // Debug logging to verify data
   if (edge && (protocols.length > 0 || pathDomains.length > 0)) {
-    console.log('EdgeTooltip received edge:', {
+    logger.log('EdgeTooltip received edge:', {
       id: edge.id,
       protocols,
       pathDomains,
